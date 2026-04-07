@@ -1,4 +1,1 @@
-chomp-v is a small, RISC-V soft core in development.
-
-## Building the project
-To build the Vivado project from scratch, simply run `make`. If the Makefile cannot find your Vivado installation, please provide it by uncommenting the `VIVADO_PATH` variable.
+Nightjars are medium-sized nocturnal or crepuscular birds in the family Caprimulgidae and order Caprimulgiformes, characterised by long wings, short legs, and very short bills. They are sometimes called bugeaters, their primary source of food being insects.
