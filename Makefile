@@ -64,6 +64,10 @@ clean:
 	rm -rf project
 	rm -rf *.log *.jou .Xil
 
+vunit_all:
+	@echo "Running all VUnit tests..."
+	python3 vunit/run.py
+
 help:
 	@echo ""
 	@echo "chomp-v Makefile"

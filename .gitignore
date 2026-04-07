@@ -1,6 +1,14 @@
+# VUnit outputs
+*/vunit_out/
+*/vunit_out/*
+*.cf
+
 # Vivado-related directories
 .Xil/*
 project/*
+
+# Virtual environment artefacts
+venv/*
 
 # Vivado generated
 *.jou
