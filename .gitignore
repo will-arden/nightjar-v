@@ -2,6 +2,7 @@
 */vunit_out/
 */vunit_out/*
 *.cf
+*.pyc
 
 # Vivado-related directories
 .Xil/*

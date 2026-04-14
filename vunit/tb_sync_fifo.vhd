@@ -34,9 +34,6 @@ architecture tb of tb_sync_fifo is
   signal empty        : std_logic;
   signal almost_empty : std_logic;
 
-  attribute keep : boolean;
-  attribute keep of sync_fifo_inst : label is true;
-
 begin
 
   -- Instantiate DUT
@@ -72,6 +69,7 @@ begin
     if (rising_edge(clk)) then
       wr_valid <= '1';
       wr_data  <= std_logic_vector(to_unsigned(num, G_WIDTH));
+      rd_ready <= '1';
       num := num + 1;
     end if;
   end process wr_proc;
