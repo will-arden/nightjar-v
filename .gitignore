@@ -1,6 +1,7 @@
-# VUnit outputs
+# VUnit artefacts
 */vunit_out/
 */vunit_out/*
+*/vunit_out/
 *.cf
 *.pyc
 
@@ -9,7 +10,8 @@
 project/*
 
 # Virtual environment artefacts
-venv/*
+**/venv/*
+**/.venv/*
 
 # Vivado generated
 *.jou

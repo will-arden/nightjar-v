@@ -2,14 +2,13 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-library work;
 use work.common_pkg.all;
 
 entity sync_fifo is
   generic (
     G_WIDTH   : positive := 32;
     G_DEPTH   : positive := 64;
-    G_REG_OUT : natural  := 1 -- The number of register stages on the read output
+    G_REG_OUT : natural  := 0 -- The number of register stages on the read output
   );
   port (
     clk : in std_logic;
@@ -54,12 +53,44 @@ architecture rtl of sync_fifo is
   signal full_i     : std_logic;
   signal empty_i    : std_logic;
 
+  signal wr_handshake : std_logic;
+
 begin
 
   -- Connect internal signals to outputs
   wr_ready <= wr_ready_i;
   rd_valid <= rd_valid_i;
   full     <= full_i;
+
+  wr_handshake <= wr_ready_i and wr_valid;
+
+  -- Instantiate RAM
+  generic_ram_inst : entity work.generic_ram
+    generic map(
+      G_WIDTH    => G_WIDTH,
+      G_DEPTH    => G_DEPTH,
+      G_RAM_TYPE => "sdp"
+    )
+    port map
+    (
+      a_clk     => clk,
+      a_port_en => '1',
+      a_addr    => std_logic_vector(wr_ptr),
+      a_rd_data => open,
+      a_rd_en   => '1',
+      a_wr_data => wr_data,
+      a_wr_en   => wr_handshake,
+      a_wr_byte_en => (others => '1'),
+
+      b_clk     => clk,
+      b_port_en => '1',
+      b_addr    => std_logic_vector(rd_ptr),
+      b_rd_data => rd_data,
+      b_rd_en   => '1',
+      b_wr_data => (others => '0'),
+      b_wr_en   => '0',
+      b_wr_byte_en => (others => '0')
+    );
 
   -- Read output logic
   --------------------------------------------------------
