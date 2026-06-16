@@ -9,7 +9,6 @@ entity nightjar_core is
     );
     port (
 
-        -- Common clock and reset
         sys_clk : in std_logic;
         sys_rst : in std_logic;
 
@@ -46,5 +45,9 @@ end entity nightjar_core;
 
 architecture rtl of nightjar_core is
 begin
+
+    ----------------------------------------
+    -- Instruction Memory Cache (i-cache) --
+    ----------------------------------------
 
 end architecture rtl;
