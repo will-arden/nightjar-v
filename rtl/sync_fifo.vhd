@@ -68,8 +68,7 @@ begin
   generic_ram_inst : entity work.generic_ram
     generic map(
       G_WIDTH    => G_WIDTH,
-      G_DEPTH    => G_DEPTH,
-      G_RAM_TYPE => "sdp"
+      G_DEPTH    => G_DEPTH
     )
     port map
     (
