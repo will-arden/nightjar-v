@@ -1,29 +1,11 @@
 # VUnit artefacts
-*/vunit_out/
-*/vunit_out/*
-*/vunit_out/
-*.cf
-*.pyc
-
-# Vivado-related directories
-.Xil/*
-project/*
+**/vunit_out/**
+**.cf
+**.pyc
 
 # Virtual environment artefacts
-**/venv/*
-**/.venv/*
-
-# Vivado generated
-*.jou
-*.log
-*.str
-*.cache
-*.runs
-*.sim
-*.hw
-*.ip_user_files
-*.gen
-*.xpr
+**/venv/**
+**/.venv/**
 
 # OS / editor junk
 .DS_Store
