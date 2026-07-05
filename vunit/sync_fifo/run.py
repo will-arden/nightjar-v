@@ -10,7 +10,6 @@ vu.set_compile_option("ghdl.a_flags", ["-frelaxed", "-Wshared"]) # Set GHDL comp
 vu.set_sim_option("ghdl.elab_flags", ["-frelaxed", "-Wshared"]) # Set GHDL simulation options
 
 # Add RTL files
-lib.add_source_file("../rtl/generic_ram.vhd")
 lib.add_source_file("../rtl/sync_fifo.vhd")
 
 # Add testbench files
