@@ -47,6 +47,9 @@ begin
     -- Connect outputs to internal signals
     instr_data_valid <= instr_data_valid_i;
 
+    -- One bus transfer is only one instruction request
+    wb_imem_cyc <= wb_imem_req;
+
     -- Synchronous control process
     ctrl_proc : process (clk) is
     begin
@@ -70,7 +73,12 @@ begin
         else
             instr_addr_ready <= '0';
         end if;
-        
+
+        -- Drive Wishbone signals
+        if (state = IMEM_LOOKUP) then
+            wb_imem_req <= '1';
+        end if;
+
     end process;
 
     -- Combinational process to determine the next state

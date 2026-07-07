@@ -38,7 +38,36 @@ architecture tb of tb_frontend is
 
 begin
 
-    -- Instantiate DUT
+    ------------------------------
+    -- Fetch request generation --
+    ------------------------------
+
+    ------------------------
+    -- Instruction memory --
+    ------------------------
+
+    x_imem : entity work.imem
+        generic map(
+            G_IMEM_DEPTH           => G_IMEM_DEPTH,
+            G_MEM_INIT_PATH        => "",
+            G_BASE_RESPONSE_CYC    => 2,  -- Normal latency in clock cycles
+            G_PENALTY_RESPONSE_CYC => 20, -- Number of clock cycles' latency added during a penalty
+            G_PENALTY_PROB         => 10  -- % chance for a penalty to occur
+        )
+        port map
+        (
+            clk          => clk,
+            wb_imem_addr => wb_imem_addr,
+            wb_imem_data => wb_imem_data,
+            wb_imem_req  => wb_imem_req,
+            wb_imem_ack  => wb_imem_ack,
+            wb_imem_cyc  => wb_imem_cyc
+        );
+
+    ---------
+    -- DUT --
+    ---------
+
     x_frontend : entity work.frontend
         generic map(
             G_IMEM_DEPTH => G_IMEM_DEPTH
@@ -60,6 +89,10 @@ begin
             wb_imem_cyc      => wb_imem_cyc
         );
 
+    ----------------------
+    -- Misc. test setup --
+    ----------------------
+
     -- Generate clock and reset
     clk <= not clk after C_CLK_PERIOD;
     rst <= '1', '0' after 10 * C_CLK_PERIOD;
@@ -68,26 +101,26 @@ begin
     main : process is
     begin
         test_runner_setup(runner, runner_cfg);
-        report "Hello world!";
+        report "Frontend test beginning...";
 
-        -- Init values
-        instr_addr <= (others => '0');
-        instr_addr_valid <= '0';
-        instr_data_ready <= '1';
-        wb_imem_ack <= '0';
-        wait for 10 * C_CLK_PERIOD;
+        -- -- Init values
+        -- instr_addr <= (others => '0');
+        -- instr_addr_valid <= '0';
+        -- instr_data_ready <= '1';
+        -- wb_imem_ack <= '0';
+        -- wait for 10 * C_CLK_PERIOD;
 
-        -- Request a fetch
-        instr_addr <= std_logic_vector(to_unsigned(10, instr_addr'length));
-        instr_addr_valid <= '1';
-        wait for C_CLK_PERIOD;
-        instr_addr_valid <= '0';
+        -- -- Request a fetch
+        -- instr_addr <= std_logic_vector(to_unsigned(10, instr_addr'length));
+        -- instr_addr_valid <= '1';
+        -- wait for C_CLK_PERIOD;
+        -- instr_addr_valid <= '0';
 
-        -- Wait a few cycles, then provide an acknowledgement from memory
-        wait for 3 * C_CLK_PERIOD;
-        wb_imem_ack <= '1';
-        wait for C_CLK_PERIOD;
-        wb_imem_ack <= '0';
+        -- -- Wait a few cycles, then provide an acknowledgement from memory
+        -- wait for 3 * C_CLK_PERIOD;
+        -- wb_imem_ack <= '1';
+        -- wait for C_CLK_PERIOD;
+        -- wb_imem_ack <= '0';
 
         wait for C_SIM_TICKS * C_CLK_PERIOD;
         test_runner_cleanup(runner);
