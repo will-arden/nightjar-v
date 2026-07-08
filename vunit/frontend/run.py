@@ -22,12 +22,19 @@ lib.add_source_file("../sim/imem.vhd")
 lib.add_source_files("frontend/*.vhd")
 
 # Set compilation and simulation options
-vu.set_compile_option("ghdl.a_flags", ["-frelaxed", "-Wshared"]) # Set GHDL compile options
-vu.set_sim_option("ghdl.elab_flags", ["-frelaxed", "-Wshared"]) # Set GHDL simulation options
+vu.set_compile_option("ghdl.a_flags", ["-frelaxed", "-Wshared"])    # Set GHDL compile options
+vu.set_sim_option("ghdl.elab_flags", ["-frelaxed", "-Wshared"])     # Set GHDL simulation options
 
 ##############################################
 # Generate test vectors and expected results #
 ##############################################
+
+import rvasm
+import shutil
+
+assembler = rvasm.RVAsm()                       # Create an Assembler object
+with open("test_program.asm", "r") as f:        # Open the assembly file
+   assembler.Assemble(f)                        # Generate the machine code
 
 ##########################
 # Begin VUnit simulation #
