@@ -11,8 +11,9 @@ use work.common_pkg.all;
 
 entity tb_frontend is
     generic (
-        runner_cfg   : string;
-        G_IMEM_DEPTH : positive := 1024
+        runner_cfg      : string;
+        G_IMEM_DEPTH    : positive := 1024;
+        G_MEM_INIT_PATH : string
     );
 end entity;
 
@@ -49,7 +50,7 @@ begin
     x_imem : entity work.imem
         generic map(
             G_IMEM_DEPTH           => G_IMEM_DEPTH,
-            G_MEM_INIT_PATH        => "",
+            G_MEM_INIT_PATH        => G_MEM_INIT_PATH,
             G_BASE_RESPONSE_CYC    => 2,  -- Normal latency in clock cycles
             G_PENALTY_RESPONSE_CYC => 20, -- Number of clock cycles' latency added during a penalty
             G_PENALTY_PROB         => 10  -- % chance for a penalty to occur

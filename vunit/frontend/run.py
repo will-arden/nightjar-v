@@ -3,6 +3,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import tb_tools
 
+###################
+# Test parameters #
+###################
+
+T_IMEM_DEPTH = 256
+T_MEM_INIT_PATH = "test_artefacts/imem.csv"
+
 ###############
 # VUnit Setup #
 ###############
@@ -18,8 +25,13 @@ lib.add_source_file("../rtl/common_pkg.vhd")
 lib.add_source_file("../rtl/frontend.vhd")
 lib.add_source_file("../sim/imem.vhd")
 
-# Add testbench files
+# Declare the testbench
 lib.add_source_files("frontend/*.vhd")
+tb = lib.test_bench("tb_frontend")
+
+# Set generics
+tb.set_generic("G_IMEM_DEPTH", T_IMEM_DEPTH)
+tb.set_generic("G_MEM_INIT_PATH", T_MEM_INIT_PATH)
 
 # Set compilation and simulation options
 vu.set_compile_option("ghdl.a_flags", ["-frelaxed", "-Wshared"])    # Set GHDL compile options
@@ -29,12 +41,17 @@ vu.set_sim_option("ghdl.elab_flags", ["-frelaxed", "-Wshared"])     # Set GHDL s
 # Generate test vectors and expected results #
 ##############################################
 
-import rvasm
-import shutil
+# Generate random memory contents
+tb_tools.generate_test_vectors_csv(width=32, num_rows=T_IMEM_DEPTH, filepath=T_MEM_INIT_PATH)
 
-assembler = rvasm.RVAsm()                       # Create an Assembler object
-with open("test_program.asm", "r") as f:        # Open the assembly file
-   assembler.Assemble(f)                        # Generate the machine code
+# Index the memory with addresses
+addr_list = []
+for i in range(0, T_IMEM_DEPTH):
+    addr_list.append(i * 4)
+tb_tools.csv_add_column_left(csv_path=T_MEM_INIT_PATH, row_data=addr_list)
+
+# Add headers
+tb_tools.csv_insert_row(csv_path=T_MEM_INIT_PATH, new_row=["address", "data"])
 
 ##########################
 # Begin VUnit simulation #
