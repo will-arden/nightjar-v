@@ -1,4 +1,5 @@
 import sys, os
+import random
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import tb_tools
@@ -9,6 +10,8 @@ import tb_tools
 
 T_IMEM_DEPTH = 256
 T_MEM_INIT_PATH = "test_artefacts/imem.csv"
+T_TRANSACTION_CSV_PATH = "test_artefacts/transactions.csv"
+T_NUM_TRANSACTIONS = 100
 
 ###############
 # VUnit Setup #
@@ -43,15 +46,21 @@ vu.set_sim_option("ghdl.elab_flags", ["-frelaxed", "-Wshared"])     # Set GHDL s
 
 # Generate random memory contents
 tb_tools.generate_test_vectors_csv(width=32, num_rows=T_IMEM_DEPTH, filepath=T_MEM_INIT_PATH)
-
-# Index the memory with addresses
 addr_list = []
 for i in range(0, T_IMEM_DEPTH):
     addr_list.append(i * 4)
 tb_tools.csv_add_column_left(csv_path=T_MEM_INIT_PATH, row_data=addr_list)
-
-# Add headers
 tb_tools.csv_insert_row(csv_path=T_MEM_INIT_PATH, new_row=["address", "data"])
+
+# Generate random addresses to access
+tb_tools.new_csv(filepath=T_TRANSACTION_CSV_PATH)
+tb_tools.csv_insert_row(csv_path=T_TRANSACTION_CSV_PATH, new_row=["address,expected_data,actual_data,latency"])
+for i in range(0, T_NUM_TRANSACTIONS):
+    csv_index = random.randint(0, T_IMEM_DEPTH - 1) + 1
+    address = tb_tools.csv_read_cell(csv_path=T_MEM_INIT_PATH, row=csv_index, col=0)
+    expected_data = tb_tools.csv_read_cell(csv_path=T_MEM_INIT_PATH, row=csv_index, col=1)
+    new_row = [address, expected_data, "-", "-"]
+    tb_tools.csv_append_row(csv_path=T_TRANSACTION_CSV_PATH, new_row=new_row)
 
 ##########################
 # Begin VUnit simulation #

@@ -42,21 +42,6 @@ architecture sim of imem is
         return (others => (others => '0'));
     end function;
 
-    -- Function to return the number of cycles required for each fetch request
-    function F_GET_RESPONSE_TIME return natural is
-        variable a : integer := G_RANDOM_SEED_A;
-        variable b : integer := G_RANDOM_SEED_B;
-        variable r : real;
-    begin
-        uniform(a, b, r); -- Generate a random decimal
-
-        if (r < (real(G_PENALTY_PROB) / real(100))) then -- Penalty
-            return G_BASE_RESPONSE_CYC + G_PENALTY_RESPONSE_CYC;
-        else -- No penalty
-            return G_BASE_RESPONSE_CYC;
-        end if;
-    end function;
-
     -- Declare memory
     signal imem : imem_t := F_GET_INIT_MEMORY;
 
@@ -117,6 +102,23 @@ begin
 
     -- Misc. sequential process
     misc_seq_proc : process (clk) is
+
+        variable seed_a : integer := G_RANDOM_SEED_A;
+        variable seed_b : integer := G_RANDOM_SEED_B;
+
+        -- Function to return the number of cycles required for each fetch request
+        impure function F_GET_RESPONSE_TIME return natural is
+            variable r : real;
+        begin
+            uniform(seed_a, seed_b, r); -- Generate a random decimal
+
+            if (r < (real(G_PENALTY_PROB) / real(100))) then -- Penalty
+                return G_BASE_RESPONSE_CYC + G_PENALTY_RESPONSE_CYC;
+            else -- No penalty
+                return G_BASE_RESPONSE_CYC;
+            end if;
+        end function;
+
     begin
         if (rising_edge(clk)) then
 

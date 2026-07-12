@@ -16,6 +16,12 @@ def bin_to_hex(bits, case="upper"):
         return f"{num_value:0{num_hex_chars}x}"
     else:
         raise Exception(f"Invalid case ""{case}""; should be ""upper"" or ""lower"".")
+    
+# Function to create a new, empty CSV file
+def new_csv(filepath):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w", newline="") as f:
+        pass
 
 # Function to generate a CSV filled with random data
 def generate_test_vectors_csv(width, num_rows, filepath="inputs/vectors.csv"):
@@ -70,3 +76,16 @@ def csv_insert_row(csv_path, new_row):
         writer = csv.writer(f)
         writer.writerow(new_row)
         writer.writerows(rows)
+
+def csv_append_row(csv_path, new_row):
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(new_row)
+
+import csv
+
+def csv_read_cell(csv_path, row, col):
+    with open(csv_path, "r", newline="") as f:
+        rows = list(csv.reader(f))
+
+    return rows[row][col]

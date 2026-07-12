@@ -43,6 +43,35 @@ begin
     -- Fetch request generation --
     ------------------------------
 
+    fetch_req_proc : process is
+        file f            : text open read_mode is G_MEM_INIT_PATH;
+        variable line     : line;
+        variable addr     : integer;
+        variable expected : std_logic_vector(31 downto 0);
+        variable comma    : character;
+        variable nullc    : character;
+    begin
+        READLINE(f, line); -- Skip header
+
+        while not endfile(f) loop
+
+            -- Read the next CSV row
+            READLINE(f, line);
+            READ(line, addr);
+            READ(line, comma);
+            READ(line, expected);
+
+            -- Request the instruction
+            instr_addr_valid <= '1';
+            instr_addr       <= std_logic_vector(to_unsigned(addr, instr_addr'length));
+
+            wait until rising_edge(clk);
+        end loop;
+        wait;
+    end process;
+
+    instr_data_ready <= '1';
+
     ------------------------
     -- Instruction memory --
     ------------------------
