@@ -2,6 +2,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use ieee.math_real.all;
+use std.textio.all;
 
 library work;
 use work.common_pkg.all;
@@ -32,18 +33,31 @@ end entity;
 
 architecture sim of imem is
 
-    -- Declare a type for instruction memory
-    type imem_t is array (0 to G_IMEM_DEPTH - 1) of std_logic_vector(31 downto 0);
-
-    -- Function to return the initialised memory
-    -- TODO: Finish this
-    function F_GET_INIT_MEMORY return imem_t is
-    begin
-        return (others => (others => '0'));
-    end function;
-
     -- Declare memory
-    signal imem : imem_t := F_GET_INIT_MEMORY;
+    type ram_t is array (0 to G_IMEM_DEPTH - 1) of std_logic_vector(31 downto 0);
+    signal ram : ram_t;
+
+    -- Procedure to return the initialised memory
+    procedure F_GET_INIT_MEMORY(ram_out : out ram_t) is
+        file f                              : text open read_mode is G_MEM_INIT_PATH;
+        variable line                       : line;
+        variable addr                       : integer;
+        variable comma                      : character;
+        variable data                       : std_logic_vector(31 downto 0);
+        variable idx                        : natural := 0;
+    begin
+        READLINE(f, line); -- Skip header
+
+        while not endfile(f) loop
+            READLINE(f, line);
+            READ(line, addr);
+            READ(line, comma);
+            READ(line, data);
+
+            ram_out(idx) := data;
+            idx          := idx + 1;
+        end loop;
+    end procedure;
 
     -- Simple state machine to model behaviour
     type state_t is (IDLE, WORKING, ACK, ERROR);
@@ -57,6 +71,15 @@ architecture sim of imem is
     signal addr : std_logic_vector(log2ceil(G_IMEM_DEPTH) - 1 downto 0);
 
 begin
+
+    -- Process to initialise the memory
+    init_proc : process is
+        variable v_ram : ram_t;
+    begin
+        F_GET_INIT_MEMORY(ram_out => v_ram);
+        ram <= v_ram;
+        wait;
+    end process;
 
     -- Combinational process to determine the next state
     next_state_proc : process (state, wb_imem_req, timer) is
@@ -92,17 +115,15 @@ begin
         -- Drive ACK and DATA
         if (state = ACK) then
             wb_imem_ack  <= '1';
-            wb_imem_data <= imem(to_integer(unsigned(addr)));
+            wb_imem_data <= ram(to_integer(unsigned(addr)));
         else
             wb_imem_ack  <= '0';
             wb_imem_data <= (others => 'U');
         end if;
-
     end process;
 
     -- Misc. sequential process
     misc_seq_proc : process (clk) is
-
         variable seed_a : integer := G_RANDOM_SEED_A;
         variable seed_b : integer := G_RANDOM_SEED_B;
 
@@ -118,7 +139,6 @@ begin
                 return G_BASE_RESPONSE_CYC;
             end if;
         end function;
-
     begin
         if (rising_edge(clk)) then
 
