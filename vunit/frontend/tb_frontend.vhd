@@ -6,36 +6,40 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use ieee.math_real.all;
 use std.textio.all;
+use ieee.std_logic_textio.all;
 
 use work.common_pkg.all;
 
 entity tb_frontend is
     generic (
-        runner_cfg      : string;
-        G_IMEM_DEPTH    : positive := 1024;
-        G_MEM_INIT_PATH : string
+        runner_cfg          : string;
+        G_IMEM_DEPTH        : positive := 1024;
+        G_MEM_INIT_PATH     : string;
+        G_TRANSACTIONS_PATH : string
     );
 end entity;
 
 architecture tb of tb_frontend is
 
     constant C_CLK_PERIOD : time    := 10 ns;
-    constant C_SIM_TICKS  : natural := 500;
+    constant C_SIM_TICKS  : natural := 5000;
 
     -- Test signals
     signal clk              : std_logic := '0';
     signal rst              : std_logic := '1';
-    signal instr_addr       : std_logic_vector(log2ceil(G_IMEM_DEPTH) - 1 downto 0);
+    signal instr_addr       : std_logic_vector(31 downto 0);
     signal instr_addr_valid : std_logic;
     signal instr_addr_ready : std_logic;
     signal instr_data       : std_logic_vector(31 downto 0);
     signal instr_data_valid : std_logic;
     signal instr_data_ready : std_logic;
-    signal wb_imem_addr     : std_logic_vector(log2ceil(G_IMEM_DEPTH) - 1 downto 0);
+    signal wb_imem_addr     : std_logic_vector(31 downto 0);
     signal wb_imem_data     : std_logic_vector(31 downto 0);
     signal wb_imem_req      : std_logic;
     signal wb_imem_ack      : std_logic;
     signal wb_imem_cyc      : std_logic;
+
+    signal s_addr : natural;
 
 begin
 
@@ -44,13 +48,21 @@ begin
     ------------------------------
 
     fetch_req_proc : process is
-        file f            : text open read_mode is G_MEM_INIT_PATH;
+        file f            : text open read_mode is G_TRANSACTIONS_PATH;
         variable line     : line;
-        variable addr     : integer;
+        variable addr     : natural;
         variable expected : std_logic_vector(31 downto 0);
+        variable actual   : character; -- No value yet
+        variable latency  : character; -- No value yet
         variable comma    : character;
         variable nullc    : character;
     begin
+
+        -- A short pause before the simulation begins
+        instr_addr_valid <= '0';
+        instr_addr       <= (others => '0');
+        wait for C_CLK_PERIOD * 5;
+
         READLINE(f, line); -- Skip header
 
         while not endfile(f) loop
@@ -60,21 +72,30 @@ begin
             READ(line, addr);
             READ(line, comma);
             READ(line, expected);
+            READ(line, comma);
+            READ(line, actual);
+            READ(line, comma);
+            READ(line, latency);
 
             -- Request the instruction
             instr_addr_valid <= '1';
             instr_addr       <= std_logic_vector(to_unsigned(addr, instr_addr'length));
+            s_addr           <= addr;
 
             -- Wait until there is a handshake before continuing
-            wait until (instr_addr_ready = '1');
+            while (instr_addr_ready = '0') loop
+                wait until rising_edge(clk);
+            end loop;
 
             -- TODO: Probability to stall, where valid is de-asserted after a good handshake
 
             wait until rising_edge(clk);
         end loop;
+        instr_addr_valid <= '0';
         wait;
     end process;
 
+    -- Model the Decode stage as always ready
     instr_data_ready <= '1';
 
     ------------------------
@@ -104,9 +125,6 @@ begin
     ---------
 
     x_frontend : entity work.frontend
-        generic map(
-            G_IMEM_DEPTH => G_IMEM_DEPTH
-        )
         port map
         (
             clk              => clk,
@@ -137,25 +155,6 @@ begin
     begin
         test_runner_setup(runner, runner_cfg);
         report "Frontend test beginning...";
-
-        -- -- Init values
-        -- instr_addr <= (others => '0');
-        -- instr_addr_valid <= '0';
-        -- instr_data_ready <= '1';
-        -- wb_imem_ack <= '0';
-        -- wait for 10 * C_CLK_PERIOD;
-
-        -- -- Request a fetch
-        -- instr_addr <= std_logic_vector(to_unsigned(10, instr_addr'length));
-        -- instr_addr_valid <= '1';
-        -- wait for C_CLK_PERIOD;
-        -- instr_addr_valid <= '0';
-
-        -- -- Wait a few cycles, then provide an acknowledgement from memory
-        -- wait for 3 * C_CLK_PERIOD;
-        -- wb_imem_ack <= '1';
-        -- wait for C_CLK_PERIOD;
-        -- wb_imem_ack <= '0';
 
         wait for C_SIM_TICKS * C_CLK_PERIOD;
         test_runner_cleanup(runner);

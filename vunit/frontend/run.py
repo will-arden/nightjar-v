@@ -1,5 +1,6 @@
 import sys, os
 import random
+import math
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import tb_tools
@@ -25,6 +26,7 @@ lib = vu.add_library("lib") # Create a new library
 
 # Add RTL files
 lib.add_source_file("../rtl/common_pkg.vhd")
+lib.add_source_file("../rtl/icache.vhd")
 lib.add_source_file("../rtl/frontend.vhd")
 lib.add_source_file("../sim/imem.vhd")
 
@@ -35,6 +37,7 @@ tb = lib.test_bench("tb_frontend")
 # Set generics
 tb.set_generic("G_IMEM_DEPTH", T_IMEM_DEPTH)
 tb.set_generic("G_MEM_INIT_PATH", T_MEM_INIT_PATH)
+tb.set_generic("G_TRANSACTIONS_PATH", T_TRANSACTION_CSV_PATH)
 
 # Set compilation and simulation options
 vu.set_compile_option("ghdl.a_flags", ["-frelaxed", "-Wshared"])    # Set GHDL compile options
@@ -54,7 +57,7 @@ tb_tools.csv_insert_row(csv_path=T_MEM_INIT_PATH, new_row=["address", "data"])
 
 # Generate random addresses to access
 tb_tools.new_csv(filepath=T_TRANSACTION_CSV_PATH)
-tb_tools.csv_insert_row(csv_path=T_TRANSACTION_CSV_PATH, new_row=["address,expected_data,actual_data,latency"])
+tb_tools.csv_insert_row(csv_path=T_TRANSACTION_CSV_PATH, new_row=["address", "expected_data", "actual_data", "latency"])
 for i in range(0, T_NUM_TRANSACTIONS):
     csv_index = random.randint(0, T_IMEM_DEPTH - 1) + 1
     address = tb_tools.csv_read_cell(csv_path=T_MEM_INIT_PATH, row=csv_index, col=0)

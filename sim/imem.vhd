@@ -22,7 +22,7 @@ entity imem is
         clk : in std_logic;
 
         -- Wishbone interface
-        wb_imem_addr : in std_logic_vector(log2ceil(G_IMEM_DEPTH) - 1 downto 0);
+        wb_imem_addr : in std_logic_vector(31 downto 0);
         wb_imem_data : out std_logic_vector(31 downto 0);
         wb_imem_req  : in std_logic;  -- STB_O
         wb_imem_ack  : out std_logic; -- ACK_I
@@ -41,7 +41,7 @@ architecture sim of imem is
     procedure F_GET_INIT_MEMORY(ram_out : out ram_t) is
         file f                              : text open read_mode is G_MEM_INIT_PATH;
         variable line                       : line;
-        variable addr                       : integer;
+        variable addr                       : integer := 0;
         variable comma                      : character;
         variable data                       : std_logic_vector(31 downto 0);
         variable idx                        : natural := 0;
@@ -68,7 +68,7 @@ architecture sim of imem is
     signal timer : natural range 0 to (G_BASE_RESPONSE_CYC + G_PENALTY_RESPONSE_CYC - 1) := 0;
 
     -- Address register
-    signal addr : std_logic_vector(log2ceil(G_IMEM_DEPTH) - 1 downto 0);
+    signal addr : std_logic_vector(31 downto 0) := (others => '0');
 
 begin
 
@@ -115,7 +115,10 @@ begin
         -- Drive ACK and DATA
         if (state = ACK) then
             wb_imem_ack  <= '1';
-            wb_imem_data <= ram(to_integer(unsigned(addr)));
+
+            -- Each line of the CSV is a single index of the RAM signal
+            -- Since instructions are byte-aligned, you must divide the address by 4 to get its index in the RAM signal
+            wb_imem_data <= ram(to_integer(unsigned(addr(31 downto 2))));
         else
             wb_imem_ack  <= '0';
             wb_imem_data <= (others => 'U');
