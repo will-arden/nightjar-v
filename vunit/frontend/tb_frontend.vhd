@@ -24,7 +24,7 @@ architecture tb of tb_frontend is
     constant C_CLK_PERIOD : time    := 10 ns;
     constant C_SIM_TICKS  : natural := 5000;
 
-    -- Test signals
+    -- DUT signals
     signal clk              : std_logic := '0';
     signal rst              : std_logic := '1';
     signal instr_addr       : std_logic_vector(31 downto 0);
@@ -39,8 +39,7 @@ architecture tb of tb_frontend is
     signal wb_imem_ack      : std_logic;
     signal wb_imem_cyc      : std_logic;
 
-    signal s_addr : natural;
-
+    signal tb_end : std_logic := '0';
 begin
 
     ------------------------------
@@ -80,7 +79,6 @@ begin
             -- Request the instruction
             instr_addr_valid <= '1';
             instr_addr       <= std_logic_vector(to_unsigned(addr, instr_addr'length));
-            s_addr           <= addr;
 
             -- Wait until there is a handshake before continuing
             while (instr_addr_ready = '0') loop
@@ -92,6 +90,13 @@ begin
             wait until rising_edge(clk);
         end loop;
         instr_addr_valid <= '0';
+
+        -- End the simulation when the final value is provided from the frontend
+        if (instr_addr_ready = '1' and instr_data_valid = '0') then
+            tb_end <= '1';
+        else
+            wait until rising_edge(clk);
+        end if;
         wait;
     end process;
 
@@ -156,6 +161,7 @@ begin
         test_runner_setup(runner, runner_cfg);
         report "Frontend test beginning...";
 
+        -- wait until (tb_end = '1'); -- fixme
         wait for C_SIM_TICKS * C_CLK_PERIOD;
         test_runner_cleanup(runner);
     end process main;

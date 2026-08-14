@@ -121,7 +121,7 @@ begin
     end process;
 
     -- Process to control the asynchronous reads from cache
-    cache_rd_proc : process (ic_rd_addr) is
+    cache_rd_proc : process (icache, rd_index, ic_rd_data, rd_offset) is
         variable found : boolean;
         variable ln    : line_t;
     begin
