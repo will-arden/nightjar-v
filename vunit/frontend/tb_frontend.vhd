@@ -80,6 +80,8 @@ begin
             instr_addr_valid <= '1';
             instr_addr       <= std_logic_vector(to_unsigned(addr, instr_addr'length));
 
+            wait until rising_edge(clk);
+
             -- Wait until there is a handshake before continuing
             while (instr_addr_ready = '0') loop
                 wait until rising_edge(clk);
@@ -87,7 +89,7 @@ begin
 
             -- TODO: Probability to stall, where valid is de-asserted after a good handshake
 
-            wait until rising_edge(clk);
+            -- wait until rising_edge(clk);
         end loop;
         instr_addr_valid <= '0';
 
