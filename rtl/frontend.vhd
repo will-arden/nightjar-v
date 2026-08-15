@@ -58,6 +58,7 @@ architecture rtl of frontend is
     signal cache_rd_data : std_logic_vector(31 downto 0);
 
     -- Misc. signals
+    signal addr_in_prog      : std_logic_vector(instr_addr'range);
     signal instr_addr_reg    : std_logic_vector(instr_addr'range);
     signal missing_data_sent : std_logic;
 
@@ -138,7 +139,7 @@ begin
         (
             clk        => clk,
             rst        => rst,
-            ic_rd_addr => instr_addr,
+            ic_rd_addr => addr_in_prog,
             ic_rd_data => cache_rd_data,
             ic_rd_hit  => cache_hit,
             ic_write   => wb_imem_ack,
@@ -150,8 +151,8 @@ begin
 
     -- Synchronous process to control the cache updates from instruction memory
     cache_update_proc : process (clk) is
-        variable v_cache_missed_addr      : std_logic_vector(instr_addr'range);
-        variable v_cache_missed_base_addr : std_logic_vector(instr_addr'range);
+        variable v_cache_missed_addr      : std_logic_vector(addr_in_prog'range);
+        variable v_cache_missed_base_addr : std_logic_vector(addr_in_prog'range);
         variable v_cache_line_counter     : integer := 0;
 
         variable next_addr        : std_logic_vector(cache_wr_addr'range);
@@ -164,12 +165,12 @@ begin
             if (state = CACHE_LOOKUP and cache_hit = '0') then
 
                 -- Load the missing/base addresses to prepare for updating the cache line
-                v_cache_missed_addr      := instr_addr;
-                v_cache_missed_base_addr := instr_addr(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
+                v_cache_missed_addr      := addr_in_prog;
+                v_cache_missed_base_addr := addr_in_prog(addr_in_prog'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
 
                 -- Prepare to update the cache line
-                cache_wr_addr     <= instr_addr; -- Fetch the missed address first
-                cache_wr_addr_ptr <= instr_addr(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits;
+                cache_wr_addr     <= addr_in_prog; -- Fetch the missed address first
+                cache_wr_addr_ptr <= addr_in_prog(addr_in_prog'high downto C_OFFSET_BITS) & null_offset_bits;
 
                 -- During a cache line update, request each address, starting with the missed address
             elsif (cache_update_complete = '0') then
@@ -218,6 +219,8 @@ begin
                 instr_data       <= cache_rd_data;
                 instr_data_valid <= '1';
             end if;
+
+            -- On the first cache miss, de-assert valid
 
             -- Following a cache miss, provide the missing data as soon as possible
             if (state = IMEM_ACK and wb_imem_ack = '1' and cache_line_counter = 0 and missing_data_sent = '0') then
@@ -268,8 +271,10 @@ begin
                 wb_imem_cyc <= '0';
             end if;
 
-            -- Register the cache_hit signal
-            cache_hit_reg <= cache_hit;
+            -- Update the address in progress (current address being fetched)
+            if (instr_addr_valid = '1' and instr_addr_ready = '1') then
+                addr_in_prog <= instr_addr;
+            end if;
         end if;
     end process;
 
