@@ -45,6 +45,7 @@ architecture rtl of frontend is
 
     -- Cache control signals
     signal cache_hit              : std_logic;
+    signal cache_hit_reg          : std_logic;
     signal cache_update_complete  : std_logic := '1';
     signal cache_missed_addr      : std_logic_vector(31 downto 0);
     signal cache_missed_base_addr : std_logic_vector(31 downto 0);
@@ -163,12 +164,12 @@ begin
             if (state = CACHE_LOOKUP and cache_hit = '0') then
 
                 -- Load the missing/base addresses to prepare for updating the cache line
-                v_cache_missed_addr      := instr_addr_reg;
-                v_cache_missed_base_addr := instr_addr_reg(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
+                v_cache_missed_addr      := instr_addr;
+                v_cache_missed_base_addr := instr_addr(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
 
                 -- Prepare to update the cache line
-                cache_wr_addr     <= instr_addr_reg; -- Fetch the missed address first
-                cache_wr_addr_ptr <= instr_addr_reg(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits;
+                cache_wr_addr     <= instr_addr; -- Fetch the missed address first
+                cache_wr_addr_ptr <= instr_addr(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits;
 
                 -- During a cache line update, request each address, starting with the missed address
             elsif (cache_update_complete = '0') then
@@ -252,8 +253,6 @@ begin
                 wb_imem_cyc <= '0';
             end if;
 
-            -- Claim the Wishbone bus when 
-
             -- Register the address when it is to be used in the next fetch request
             if (instr_addr_valid = '1') then
                 instr_addr_reg <= instr_addr;
@@ -269,6 +268,8 @@ begin
                 wb_imem_cyc <= '0';
             end if;
 
+            -- Register the cache_hit signal
+            cache_hit_reg <= cache_hit;
         end if;
     end process;
 
