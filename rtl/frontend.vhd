@@ -75,7 +75,7 @@ begin
     end process;
 
     -- Process to decide the next state
-    next_state_proc : process (state, instr_addr_valid, cache_hit, wb_imem_ack, cache_update_complete) is
+    next_state_proc : process (rst, state, instr_addr_valid, cache_hit, wb_imem_ack, cache_update_complete) is
     begin
         next_state <= state;
         case (state) is
@@ -117,6 +117,10 @@ begin
             when others =>
                 next_state <= ERROR;
         end case;
+
+        if (rst = '1') then
+            next_state <= IDLE;
+        end if;
     end process;
 
     -------------
@@ -159,12 +163,12 @@ begin
             if (state = CACHE_LOOKUP and cache_hit = '0') then
 
                 -- Load the missing/base addresses to prepare for updating the cache line
-                v_cache_missed_addr      := instr_addr;
-                v_cache_missed_base_addr := instr_addr(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
+                v_cache_missed_addr      := instr_addr_reg;
+                v_cache_missed_base_addr := instr_addr_reg(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
 
                 -- Prepare to update the cache line
-                cache_wr_addr     <= instr_addr; -- Fetch the missed address first
-                cache_wr_addr_ptr <= instr_addr(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits;
+                cache_wr_addr     <= instr_addr_reg; -- Fetch the missed address first
+                cache_wr_addr_ptr <= instr_addr_reg(instr_addr'high downto C_OFFSET_BITS) & null_offset_bits;
 
                 -- During a cache line update, request each address, starting with the missed address
             elsif (cache_update_complete = '0') then
@@ -268,7 +272,7 @@ begin
         end if;
     end process;
 
-    instr_addr_ready <= '1' when ((next_state = IDLE or next_state = CACHE_LOOKUP)) else
+    instr_addr_ready <= '1' when ((next_state = IDLE or next_state = CACHE_LOOKUP) and rst = '0') else
         '0';
 
     -- Combinational control process

@@ -12,6 +12,7 @@ import tb_tools
 T_IMEM_DEPTH = 256
 T_MEM_INIT_PATH = "test_artefacts/imem.csv"
 T_TRANSACTION_CSV_PATH = "test_artefacts/transactions.csv"
+T_RESULTS_CSV_PATH = "test_artefacts/results.csv"
 T_NUM_TRANSACTIONS = 100
 
 ###############
@@ -38,6 +39,7 @@ tb = lib.test_bench("tb_frontend")
 tb.set_generic("G_IMEM_DEPTH", T_IMEM_DEPTH)
 tb.set_generic("G_MEM_INIT_PATH", T_MEM_INIT_PATH)
 tb.set_generic("G_TRANSACTIONS_PATH", T_TRANSACTION_CSV_PATH)
+tb.set_generic("G_RESULTS_PATH", T_RESULTS_CSV_PATH)
 
 # Set compilation and simulation options
 vu.set_compile_option("ghdl.a_flags", ["-frelaxed", "-Wshared"])    # Set GHDL compile options
@@ -73,3 +75,15 @@ try:
     vu.main()
 except SystemExit as e:
     print(f"VUnit exited with code: {e.code}")
+
+###############################
+# Perform analysis of results #
+###############################
+
+for row in range(1, T_NUM_TRANSACTIONS):
+    result = tb_tools.csv_read_cell(csv_path=T_RESULTS_CSV_PATH, row=row, col=0)
+    expected = tb_tools.csv_read_cell(csv_path=T_TRANSACTION_CSV_PATH, row=row, col=1)
+    print(f"Result = {result} \tExpected = {expected}")
+
+    if (result is None or result != expected):
+        print(f"RESULTS DO NOT MATCH")

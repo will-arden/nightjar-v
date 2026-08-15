@@ -15,7 +15,8 @@ entity tb_frontend is
         runner_cfg          : string;
         G_IMEM_DEPTH        : positive := 1024;
         G_MEM_INIT_PATH     : string;
-        G_TRANSACTIONS_PATH : string
+        G_TRANSACTIONS_PATH : string;
+        G_RESULTS_PATH      : string
     );
 end entity;
 
@@ -148,6 +149,28 @@ begin
             wb_imem_ack      => wb_imem_ack,
             wb_imem_cyc      => wb_imem_cyc
         );
+
+    --------------------
+    -- Output results --
+    --------------------
+
+    results_proc : process is
+        file f     : text open write_mode is G_RESULTS_PATH;
+        variable l : line;
+        variable i : integer := 0;
+    begin
+        write(l, string'("instr_data"));
+        writeline(f, l);
+
+        while (true) loop
+            if (instr_data_ready = '1' and instr_data_valid = '1') then
+                write(l, instr_data);
+                writeline(f, l);
+            end if;
+            wait until rising_edge(clk);
+        end loop;
+        wait;
+    end process;
 
     ----------------------
     -- Misc. test setup --
