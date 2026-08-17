@@ -38,6 +38,7 @@ architecture rtl of frontend is
     -- FSM States
     type state_t is (IDLE, CACHE_LOOKUP, IMEM_STB, IMEM_ACK, ERROR);
     signal state      : state_t := IDLE;
+    signal state_reg  : state_t := IDLE;
     signal next_state : state_t := IDLE;
 
     -- Number of offset bits in the cache address (when these bits are zero, it is the base address)
@@ -50,6 +51,7 @@ architecture rtl of frontend is
     signal cache_missed_addr      : std_logic_vector(31 downto 0);
     signal cache_missed_base_addr : std_logic_vector(31 downto 0);
     signal cache_line_counter     : natural := 0;
+    signal cache_line_counter_reg : natural := 0;
     signal cache_wr_addr_ptr      : std_logic_vector(31 downto 0);
 
     -- Cache interface signals
@@ -58,9 +60,11 @@ architecture rtl of frontend is
     signal cache_rd_data : std_logic_vector(31 downto 0);
 
     -- Misc. signals
-    signal addr_in_prog      : std_logic_vector(instr_addr'range);
-    signal instr_addr_reg    : std_logic_vector(instr_addr'range);
-    signal missing_data_sent : std_logic;
+    signal addr_in_prog          : std_logic_vector(instr_addr'range);
+    signal instr_addr_reg        : std_logic_vector(instr_addr'range);
+    signal missing_data_sent     : std_logic;
+    signal missing_data_sent_reg : std_logic;
+    signal wb_imem_ack_reg       : std_logic;
 
 begin
 
@@ -212,25 +216,25 @@ begin
     data_ret_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-            instr_data_valid <= '0';
+            -- instr_data_valid <= '0';
 
             -- If there is a cache hit, provide the data directly from the cache
             -- FIXME: valid should be controlled in comb logic, since it needs to respond to cache_hit which is also comb in a single cycle
             if (state = CACHE_LOOKUP and cache_hit = '1') then
-                instr_data       <= cache_rd_data;
-                instr_data_valid <= '1';
+                instr_data <= cache_rd_data;
+                -- instr_data_valid <= '1';
             end if;
 
             -- Following a cache miss, provide the missing data as soon as possible
             if (state = IMEM_ACK and wb_imem_ack = '1' and cache_line_counter = 0 and missing_data_sent = '0') then
-                instr_data        <= wb_imem_data;
-                instr_data_valid  <= '1';
+                instr_data <= wb_imem_data;
+                -- instr_data_valid  <= '1';
                 missing_data_sent <= '1';
             end if;
 
             -- De-assert valid when there is a handshake
             if (instr_data_ready = '1' and instr_data_valid = '1' and cache_hit = '0') then
-                instr_data_valid <= '0';
+                -- instr_data_valid <= '0';
             end if;
 
             -- Reset flag for subsequent handshakes with the Decode stage
@@ -274,6 +278,13 @@ begin
             if (instr_addr_valid = '1' and instr_addr_ready = '1') then
                 addr_in_prog <= instr_addr;
             end if;
+
+            -- Misc. registers
+            state_reg              <= state;
+            cache_hit_reg          <= cache_hit;
+            wb_imem_ack_reg        <= wb_imem_ack;
+            cache_line_counter_reg <= cache_line_counter;
+            missing_data_sent_reg  <= missing_data_sent;
         end if;
     end process;
 
@@ -281,8 +292,11 @@ begin
         '0';
 
     -- Combinational control process
-    comb_proc : process (state, next_state) is
+    comb_proc : process (state, next_state, cache_hit, cache_hit_reg, state_reg, wb_imem_ack_reg, cache_line_counter_reg, missing_data_sent_reg) is
     begin
+        -- Set defaults to prevent latches
+        wb_imem_req      <= '0';
+        instr_data_valid <= '0';
 
         -- The STB_O should be asserted in the IMEM_STB/ACK states
         if (state = IMEM_STB or state = IMEM_ACK) then
@@ -292,6 +306,17 @@ begin
         -- However, when an ACK has been received, the STB_O signal can be de-asserted
         if (state = IMEM_ACK and next_state /= IMEM_ACK) then
             wb_imem_req <= '0';
+        end if;
+
+        -- Validate instr_data when data has just been loaded onto the bus (unless there is currently a cache miss)
+        -- if (state_reg = CACHE_LOOKUP and cache_hit_reg = '1' and cache_hit = '1') then
+        if (state_reg = CACHE_LOOKUP and cache_hit_reg = '1') then
+            instr_data_valid <= '1';
+        end if;
+
+        -- Following a cache miss, validate the missing data which is supplied as soon as possible
+        if (state_reg = IMEM_ACK and wb_imem_ack_reg = '1' and cache_line_counter_reg = 0 and missing_data_sent_reg = '0') then
+            instr_data_valid <= '1';
         end if;
     end process;
 
