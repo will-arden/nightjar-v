@@ -13,7 +13,7 @@ T_IMEM_DEPTH = 256
 T_MEM_INIT_PATH = "test_artefacts/imem.csv"
 T_TRANSACTION_CSV_PATH = "test_artefacts/transactions.csv"
 T_RESULTS_CSV_PATH = "test_artefacts/results.csv"
-T_NUM_TRANSACTIONS = 100
+T_NUM_TRANSACTIONS = 1000
 
 ###############
 # VUnit Setup #

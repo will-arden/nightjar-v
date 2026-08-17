@@ -23,7 +23,7 @@ end entity;
 architecture tb of tb_frontend is
 
     constant C_CLK_PERIOD : time    := 10 ns;
-    constant C_SIM_TICKS  : natural := 5000;
+    constant C_SIM_TICKS  : natural := 50000;
 
     -- DUT signals
     signal clk              : std_logic := '0';
