@@ -27,9 +27,9 @@ package body common_pkg is
     end function log2;
 
     function log2ceil(num : natural) return natural is
-        variable lognum : natural := log2(num);
+        variable lognum       : natural := log2(num);
     begin
-        if (num > (2**lognum)) then
+        if (num > (2 ** lognum)) then
             return lognum + 1;
         end if;
         return lognum;
@@ -47,6 +47,15 @@ package body common_pkg is
     function to_uint (slv : std_logic_vector) return integer is
     begin
         return to_integer(unsigned(slv));
+    end function;
+
+    function to_std_logic(bool : boolean) return std_logic is
+    begin
+        if (bool) then
+            return '1';
+        else
+            return '0';
+        end if;
     end function;
 
     function slv_uadd (slv : std_logic_vector; num : integer) return std_logic_vector is

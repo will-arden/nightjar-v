@@ -215,12 +215,11 @@ begin
             instr_data_valid <= '0';
 
             -- If there is a cache hit, provide the data directly from the cache
+            -- FIXME: valid should be controlled in comb logic, since it needs to respond to cache_hit which is also comb in a single cycle
             if (state = CACHE_LOOKUP and cache_hit = '1') then
                 instr_data       <= cache_rd_data;
                 instr_data_valid <= '1';
             end if;
-
-            -- On the first cache miss, de-assert valid
 
             -- Following a cache miss, provide the missing data as soon as possible
             if (state = IMEM_ACK and wb_imem_ack = '1' and cache_line_counter = 0 and missing_data_sent = '0') then

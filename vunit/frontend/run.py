@@ -80,10 +80,20 @@ except SystemExit as e:
 # Perform analysis of results #
 ###############################
 
+success = True
 for row in range(1, T_NUM_TRANSACTIONS):
     result = tb_tools.csv_read_cell(csv_path=T_RESULTS_CSV_PATH, row=row, col=0)
     expected = tb_tools.csv_read_cell(csv_path=T_TRANSACTION_CSV_PATH, row=row, col=1)
-    print(f"Result = {result} \tExpected = {expected}")
 
-    if (result is None or result != expected):
-        print(f"RESULTS DO NOT MATCH")
+    if (result is None) or result != expected:
+        msg = "ERROR: Result does not match the expected value"
+        success = False
+    else:
+        msg = "MATCH"
+
+    print(f"idx = {row} \tresult = {result} \texpected = {expected} \t--> {msg}")
+
+if (success):
+    print(f"\nTest passed!")
+else:
+    print(f"\nTEST FAILED: FRONTEND OUTPUT DID NOT MATCH THE EXPECTED VALUES.")
