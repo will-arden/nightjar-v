@@ -38,7 +38,6 @@ architecture rtl of frontend is
     -- FSM States
     type state_t is (IDLE, CACHE_LOOKUP, IMEM_STB, IMEM_ACK, ERROR);
     signal state      : state_t := IDLE;
-    signal state_reg  : state_t := IDLE;
     signal next_state : state_t := IDLE;
 
     -- Number of offset bits in the cache address (when these bits are zero, it is the base address)
@@ -46,13 +45,10 @@ architecture rtl of frontend is
 
     -- Cache control signals
     signal cache_hit              : std_logic;
-    signal cache_hit_reg          : std_logic;
     signal cache_update_complete  : std_logic := '1';
     signal cache_missed_addr      : std_logic_vector(31 downto 0);
     signal cache_missed_base_addr : std_logic_vector(31 downto 0);
     signal cache_line_counter     : natural := 0;
-    signal cache_line_counter_reg : natural := 0;
-    signal cache_wr_addr_ptr      : std_logic_vector(31 downto 0);
 
     -- Cache interface signals
     signal cache_wr_addr : std_logic_vector(31 downto 0);
@@ -60,13 +56,12 @@ architecture rtl of frontend is
     signal cache_rd_data : std_logic_vector(31 downto 0);
 
     -- Misc. signals
-    signal addr_in_prog          : std_logic_vector(instr_addr'range);
-    signal instr_addr_reg        : std_logic_vector(instr_addr'range);
-    signal missing_data_sent     : std_logic;
-    signal missing_data_sent_reg : std_logic;
-    signal wb_imem_ack_reg       : std_logic;
-
+    signal addr_in_prog      : std_logic_vector(instr_addr'range);
+    signal missing_data_sent : std_logic;
 begin
+
+    -- Assert the ready signal when the cache is free to work on a new fetch request on the next cycle
+    instr_addr_ready <= not rst and to_std_logic(next_state = IDLE or next_state = CACHE_LOOKUP);
 
     --------------------------
     -- Finite State Machine --
@@ -124,14 +119,15 @@ begin
                 next_state <= ERROR;
         end case;
 
+        -- Initialise the state on reset
         if (rst = '1') then
             next_state <= IDLE;
         end if;
     end process;
 
-    -------------
-    -- I-Cache --
-    -------------
+    --------------------------
+    -- Asynchronous I-Cache --
+    --------------------------
 
     x_icache : entity work.icache
         generic map(
@@ -151,7 +147,12 @@ begin
             ic_wr_data => wb_imem_data
         );
 
-    wb_imem_addr <= cache_wr_addr;
+    -------------------
+    -- Cache updates --
+    -------------------
+
+    -- The cache update is only marked as complete when ACK is asserted for the final time
+    cache_update_complete <= wb_imem_ack and to_std_logic(cache_line_counter = G_ICACHE_LINE_WIDTH - 1);
 
     -- Synchronous process to control the cache updates from instruction memory
     cache_update_proc : process (clk) is
@@ -165,6 +166,11 @@ begin
     begin
         if (rising_edge(clk)) then
 
+            -- Update the address in progress (current address being fetched)
+            if (instr_addr_valid = '1' and instr_addr_ready = '1') then
+                addr_in_prog <= instr_addr;
+            end if;
+
             -- Detect a new cache miss
             if (state = CACHE_LOOKUP and cache_hit = '0') then
 
@@ -172,9 +178,8 @@ begin
                 v_cache_missed_addr      := addr_in_prog;
                 v_cache_missed_base_addr := addr_in_prog(addr_in_prog'high downto C_OFFSET_BITS) & null_offset_bits; -- Round down to find the base
 
-                -- Prepare to update the cache line
-                cache_wr_addr     <= addr_in_prog; -- Fetch the missed address first
-                cache_wr_addr_ptr <= addr_in_prog(addr_in_prog'high downto C_OFFSET_BITS) & null_offset_bits;
+                -- Prepare to update the cache line (fetch the missed address first)
+                cache_wr_addr <= addr_in_prog;
 
                 -- During a cache line update, request each address, starting with the missed address
             elsif (cache_update_complete = '0') then
@@ -208,33 +213,23 @@ begin
         end if;
     end process;
 
-    -- The cache update is only marked as complete when ACK is asserted for the final time
-    cache_update_complete <= '1' when (cache_line_counter = G_ICACHE_LINE_WIDTH - 1 and wb_imem_ack = '1') else
-        '0';
-
     -- Process to control the data given to the Decode stage
     data_ret_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-            -- instr_data_valid <= '0';
+            instr_data_valid <= '0';
 
             -- If there is a cache hit, provide the data directly from the cache
-            -- FIXME: valid should be controlled in comb logic, since it needs to respond to cache_hit which is also comb in a single cycle
             if (state = CACHE_LOOKUP and cache_hit = '1') then
-                instr_data <= cache_rd_data;
-                -- instr_data_valid <= '1';
+                instr_data       <= cache_rd_data;
+                instr_data_valid <= '1';
             end if;
 
             -- Following a cache miss, provide the missing data as soon as possible
             if (state = IMEM_ACK and wb_imem_ack = '1' and cache_line_counter = 0 and missing_data_sent = '0') then
-                instr_data <= wb_imem_data;
-                -- instr_data_valid  <= '1';
+                instr_data        <= wb_imem_data;
+                instr_data_valid  <= '1';
                 missing_data_sent <= '1';
-            end if;
-
-            -- De-assert valid when there is a handshake
-            if (instr_data_ready = '1' and instr_data_valid = '1' and cache_hit = '0') then
-                -- instr_data_valid <= '0';
             end if;
 
             -- Reset flag for subsequent handshakes with the Decode stage
@@ -242,27 +237,29 @@ begin
                 missing_data_sent <= '0';
             end if;
 
+            -- Initialise registers on reset
+            if (rst = '1') then
+                instr_data_valid  <= '0';
+                missing_data_sent <= '0';
+            end if;
         end if;
     end process;
 
-    -----------
-    -- Misc. --
-    -----------
+    ----------------------
+    -- Wishbone Control --
+    ----------------------
+
+    wb_imem_req <= not rst
+        and to_std_logic(state = IMEM_STB or state = IMEM_ACK)               -- The STB_O should be asserted in the IMEM_STB/ACK states
+        and (not to_std_logic(state = IMEM_ACK and next_state /= IMEM_ACK)); -- However, when an ACK has been received, the STB_O signal can be de-asserted
+
+    -- Fetch the required instruction to complete the cache line update
+    wb_imem_addr <= cache_wr_addr;
 
     -- Synchronous control process
-    ctrl_proc : process (clk) is
+    wb_sync_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-
-            -- Default values should be loaded during the IDLE state
-            if (next_state = IDLE) then
-                wb_imem_cyc <= '0';
-            end if;
-
-            -- Register the address when it is to be used in the next fetch request
-            if (instr_addr_valid = '1') then
-                instr_addr_reg <= instr_addr;
-            end if;
 
             -- In the IMEM_STB state, the STB_O and CYC_O signals must be asserted
             if (next_state = IMEM_STB) then
@@ -274,49 +271,10 @@ begin
                 wb_imem_cyc <= '0';
             end if;
 
-            -- Update the address in progress (current address being fetched)
-            if (instr_addr_valid = '1' and instr_addr_ready = '1') then
-                addr_in_prog <= instr_addr;
+            -- Initialise upon reset, or a return to IDLE
+            if (rst = '1' or next_state = IDLE) then
+                wb_imem_cyc <= '0';
             end if;
-
-            -- Misc. registers
-            state_reg              <= state;
-            cache_hit_reg          <= cache_hit;
-            wb_imem_ack_reg        <= wb_imem_ack;
-            cache_line_counter_reg <= cache_line_counter;
-            missing_data_sent_reg  <= missing_data_sent;
-        end if;
-    end process;
-
-    instr_addr_ready <= '1' when ((next_state = IDLE or next_state = CACHE_LOOKUP) and rst = '0') else
-        '0';
-
-    -- Combinational control process
-    comb_proc : process (state, next_state, cache_hit, cache_hit_reg, state_reg, wb_imem_ack_reg, cache_line_counter_reg, missing_data_sent_reg) is
-    begin
-        -- Set defaults to prevent latches
-        wb_imem_req      <= '0';
-        instr_data_valid <= '0';
-
-        -- The STB_O should be asserted in the IMEM_STB/ACK states
-        if (state = IMEM_STB or state = IMEM_ACK) then
-            wb_imem_req <= '1';
-        end if;
-
-        -- However, when an ACK has been received, the STB_O signal can be de-asserted
-        if (state = IMEM_ACK and next_state /= IMEM_ACK) then
-            wb_imem_req <= '0';
-        end if;
-
-        -- Validate instr_data when data has just been loaded onto the bus (unless there is currently a cache miss)
-        -- if (state_reg = CACHE_LOOKUP and cache_hit_reg = '1' and cache_hit = '1') then
-        if (state_reg = CACHE_LOOKUP and cache_hit_reg = '1') then
-            instr_data_valid <= '1';
-        end if;
-
-        -- Following a cache miss, validate the missing data which is supplied as soon as possible
-        if (state_reg = IMEM_ACK and wb_imem_ack_reg = '1' and cache_line_counter_reg = 0 and missing_data_sent_reg = '0') then
-            instr_data_valid <= '1';
         end if;
     end process;
 

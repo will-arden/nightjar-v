@@ -4,10 +4,11 @@ use ieee.numeric_std.all;
 
 package common_pkg is
 
-    function log2 (num        : natural) return natural;
-    function log2ceil (num    : natural) return natural;
-    function to_integer (bool : boolean) return integer;
-    function to_uint (slv     : std_logic_vector) return integer;
+    function log2 (num         : natural) return natural;
+    function log2ceil (num     : natural) return natural;
+    function to_integer (bool  : boolean) return integer;
+    function to_uint (slv      : std_logic_vector) return integer;
+    function to_std_logic(bool : boolean) return std_logic;
     function slv_uadd (slv : std_logic_vector; num : integer) return std_logic_vector;
     function pad (slv : std_logic_vector; n : positive) return std_logic_vector;
 

@@ -22,8 +22,8 @@ end entity;
 
 architecture tb of tb_frontend is
 
+    -- Define an arbitrary clock period
     constant C_CLK_PERIOD : time    := 10 ns;
-    constant C_SIM_TICKS  : natural := 50000;
 
     -- DUT signals
     signal clk              : std_logic := '0';
@@ -92,14 +92,13 @@ begin
 
             -- wait until rising_edge(clk);
         end loop;
-        instr_addr_valid <= '0';
 
-        -- End the simulation when the final value is provided from the frontend
-        if (instr_addr_ready = '1' and instr_data_valid = '0') then
-            tb_end <= '1';
-        else
+        -- End the simulation
+        instr_addr_valid <= '0';
+        while not (instr_addr_valid = '0' and instr_addr_ready = '1' and instr_data_valid = '0') loop
             wait until rising_edge(clk);
-        end if;
+        end loop;
+        tb_end <= '1';
         wait;
     end process;
 
@@ -185,9 +184,7 @@ begin
     begin
         test_runner_setup(runner, runner_cfg);
         report "Frontend test beginning...";
-
-        -- wait until (tb_end = '1'); -- fixme
-        wait for C_SIM_TICKS * C_CLK_PERIOD;
+        wait until rising_edge(tb_end);
         test_runner_cleanup(runner);
     end process main;
 
