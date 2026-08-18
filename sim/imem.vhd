@@ -24,7 +24,7 @@ entity imem is
         -- Wishbone interface
         wb_imem_addr : in std_logic_vector(31 downto 0);
         wb_imem_data : out std_logic_vector(31 downto 0);
-        wb_imem_req  : in std_logic;  -- STB_O
+        wb_imem_stb  : in std_logic;  -- STB_O
         wb_imem_ack  : out std_logic; -- ACK_I
         wb_imem_cyc  : in std_logic   -- CYC_O
 
@@ -82,13 +82,13 @@ begin
     end process;
 
     -- Combinational process to determine the next state
-    next_state_proc : process (state, wb_imem_req, timer) is
+    next_state_proc : process (state, wb_imem_stb, timer) is
     begin
         next_state <= state;
         case state is
 
             when IDLE =>
-                if (wb_imem_req = '1') then
+                if (wb_imem_stb = '1') then
                     next_state <= WORKING;
                 end if;
 
@@ -98,7 +98,7 @@ begin
                 end if;
 
             when ACK =>
-                if (wb_imem_req = '1') then
+                if (wb_imem_stb = '1') then
                     next_state <= WORKING;
                 else
                     next_state <= IDLE;
@@ -114,7 +114,7 @@ begin
 
         -- Drive ACK and DATA
         if (state = ACK) then
-            wb_imem_ack  <= '1';
+            wb_imem_ack <= '1';
 
             -- Each line of the CSV is a single index of the RAM signal
             -- Since instructions are byte-aligned, you must divide the address by 4 to get its index in the RAM signal

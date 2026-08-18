@@ -36,7 +36,7 @@ architecture tb of tb_frontend is
     signal instr_data_ready : std_logic;
     signal wb_imem_addr     : std_logic_vector(31 downto 0);
     signal wb_imem_data     : std_logic_vector(31 downto 0);
-    signal wb_imem_req      : std_logic;
+    signal wb_imem_stb      : std_logic;
     signal wb_imem_ack      : std_logic;
     signal wb_imem_cyc      : std_logic;
 
@@ -122,7 +122,7 @@ begin
             clk          => clk,
             wb_imem_addr => wb_imem_addr,
             wb_imem_data => wb_imem_data,
-            wb_imem_req  => wb_imem_req,
+            wb_imem_stb  => wb_imem_stb,
             wb_imem_ack  => wb_imem_ack,
             wb_imem_cyc  => wb_imem_cyc
         );
@@ -144,7 +144,7 @@ begin
             instr_data_ready => instr_data_ready,
             wb_imem_addr     => wb_imem_addr,
             wb_imem_data     => wb_imem_data,
-            wb_imem_req      => wb_imem_req,
+            wb_imem_stb      => wb_imem_stb,
             wb_imem_ack      => wb_imem_ack,
             wb_imem_cyc      => wb_imem_cyc
         );

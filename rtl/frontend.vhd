@@ -27,7 +27,7 @@ entity frontend is
         -- Instruction Memory Interface (Wishbone)
         wb_imem_addr : out std_logic_vector(31 downto 0);
         wb_imem_data : in std_logic_vector(31 downto 0);
-        wb_imem_req  : out std_logic; -- STB_O
+        wb_imem_stb  : out std_logic; -- STB_O
         wb_imem_ack  : in std_logic;  -- ACK_I
         wb_imem_cyc  : out std_logic  -- CYC_O
     );
@@ -249,11 +249,11 @@ begin
     -- Wishbone Control --
     ----------------------
 
-    wb_imem_req <= not rst
+    wb_imem_stb <= not rst
         and to_std_logic(state = IMEM_STB or state = IMEM_ACK)               -- The STB_O should be asserted in the IMEM_STB/ACK states
         and (not to_std_logic(state = IMEM_ACK and next_state /= IMEM_ACK)); -- However, when an ACK has been received, the STB_O signal can be de-asserted
 
-    -- Fetch the required instruction to complete the cache line update
+    -- Fetch the required instruction to complete the cache line update (clocked)
     wb_imem_addr <= cache_wr_addr;
 
     -- Synchronous control process

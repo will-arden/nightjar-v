@@ -18,7 +18,7 @@ entity nightjar_core is
 
         wb_imem_addr : out std_logic_vector(log2ceil(G_IMEM_DEPTH) - 1 downto 0);
         wb_imem_data : in std_logic_vector(31 downto 0);
-        wb_imem_req  : out std_logic; -- STB_O
+        wb_imem_stb  : out std_logic; -- STB_O
         wb_imem_ack  : in std_logic;  -- ACK_I
         wb_imem_cyc  : out std_logic; -- CYC_O
 
@@ -60,7 +60,7 @@ begin
             instr_data_ready => instr_data_ready,
             wb_imem_addr     => wb_imem_addr,
             wb_imem_data     => wb_imem_data,
-            wb_imem_req      => wb_imem_req,
+            wb_imem_stb      => wb_imem_stb,
             wb_imem_ack      => wb_imem_ack,
             wb_imem_cyc      => wb_imem_cyc
         );
