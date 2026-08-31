@@ -16,14 +16,23 @@ entity tb_frontend is
         G_IMEM_DEPTH        : positive := 1024;
         G_MEM_INIT_PATH     : string;
         G_TRANSACTIONS_PATH : string;
-        G_RESULTS_PATH      : string
+        G_RESULTS_PATH      : string;
+
+        -- Decode properties
+        G_DECODE_SEED_A             : integer                := 1234;
+        G_DECODE_SEED_B             : integer                := 5678;
+        G_DECODE_ADDR_STALL_PROB    : natural range 0 to 100 := 15;
+        G_DECODE_ADDR_STALL_PENALTY : natural                := 10
     );
 end entity;
 
 architecture tb of tb_frontend is
 
     -- Define an arbitrary clock period
-    constant C_CLK_PERIOD : time    := 10 ns;
+    constant C_CLK_PERIOD : time := 10 ns;
+
+    -- Signal to denote the end of the test
+    signal tb_end : std_logic := '0';
 
     -- DUT signals
     signal clk              : std_logic := '0';
@@ -40,7 +49,6 @@ architecture tb of tb_frontend is
     signal wb_imem_ack      : std_logic;
     signal wb_imem_cyc      : std_logic;
 
-    signal tb_end : std_logic := '0';
 begin
 
     ------------------------------
@@ -48,14 +56,18 @@ begin
     ------------------------------
 
     fetch_req_proc : process is
-        file f            : text open read_mode is G_TRANSACTIONS_PATH;
-        variable line     : line;
-        variable addr     : natural;
-        variable expected : std_logic_vector(31 downto 0);
-        variable actual   : character; -- No value yet
-        variable latency  : character; -- No value yet
-        variable comma    : character;
-        variable nullc    : character;
+        file f                : text open read_mode is G_TRANSACTIONS_PATH;
+        variable line         : line;
+        variable addr         : natural;
+        variable expected     : std_logic_vector(31 downto 0);
+        variable actual       : character; -- No value yet
+        variable latency      : character; -- No value yet
+        variable comma        : character;
+        variable nullc        : character;
+        variable stall_seed_a : integer := G_DECODE_SEED_A;
+        variable stall_seed_b : integer := G_DECODE_SEED_B;
+        variable stall_r      : real;
+        variable penalty      : natural range 0 to (G_DECODE_ADDR_STALL_PENALTY - 1);
     begin
 
         -- A short pause before the simulation begins
@@ -77,6 +89,15 @@ begin
             READ(line, comma);
             READ(line, latency);
 
+            -- Randomly cause a stall
+            uniform(stall_seed_a, stall_seed_b, stall_r);                    -- Generate a random number
+            if (stall_r < (real(G_DECODE_ADDR_STALL_PROB)) / real(100)) then -- Decide if there is a stall
+                instr_addr_valid <= '0';                                         -- Invalidate request
+                for cyc in 0 to (G_DECODE_ADDR_STALL_PENALTY - 1) loop           -- Stall for N cycles
+                    wait until rising_edge(clk);
+                end loop;
+            end if;
+
             -- Request the instruction
             instr_addr_valid <= '1';
             instr_addr       <= std_logic_vector(to_unsigned(addr, instr_addr'length));
@@ -87,10 +108,6 @@ begin
             while (instr_addr_ready = '0') loop
                 wait until rising_edge(clk);
             end loop;
-
-            -- TODO: Probability to stall, where valid is de-asserted after a good handshake
-
-            -- wait until rising_edge(clk);
         end loop;
 
         -- End the simulation
