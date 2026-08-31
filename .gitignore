@@ -1,5 +1,7 @@
-# VUnit artefacts
-**/vunit_out/**
+# VUnit test artefacts
+vunit/vunit_out/**
+vunit/test_artefacts/**
+
 **.cf
 **.pyc
 
