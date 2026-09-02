@@ -12,17 +12,23 @@ use work.common_pkg.all;
 
 entity tb_frontend is
     generic (
-        runner_cfg          : string;
-        G_IMEM_DEPTH        : positive := 1024;
+        runner_cfg      : string;
+        G_RANDOM_SEED_A : integer := 1234;
+        G_RANDOM_SEED_B : integer := 5678;
+
+        -- Hardware properties
+        G_IMEM_DEPTH : positive := 1024;
+
+        -- CSV filepaths
         G_MEM_INIT_PATH     : string;
         G_TRANSACTIONS_PATH : string;
         G_RESULTS_PATH      : string;
 
         -- Decode properties
-        G_DECODE_SEED_A             : integer                := 1234;
-        G_DECODE_SEED_B             : integer                := 5678;
         G_DECODE_ADDR_STALL_PROB    : natural range 0 to 100 := 15;
-        G_DECODE_ADDR_STALL_PENALTY : natural                := 10
+        G_DECODE_ADDR_STALL_PENALTY : natural                := 10;
+        G_DECODE_RDY_STALL_PROB     : natural range 0 to 100 := 15;
+        G_DECODE_RDY_STALL_PENALTY  : natural                := 10
     );
 end entity;
 
@@ -64,10 +70,9 @@ begin
         variable latency      : character; -- No value yet
         variable comma        : character;
         variable nullc        : character;
-        variable stall_seed_a : integer := G_DECODE_SEED_A;
-        variable stall_seed_b : integer := G_DECODE_SEED_B;
+        variable stall_seed_a : integer := G_RANDOM_SEED_A;
+        variable stall_seed_b : integer := G_RANDOM_SEED_B;
         variable stall_r      : real;
-        variable penalty      : natural range 0 to (G_DECODE_ADDR_STALL_PENALTY - 1);
     begin
 
         -- A short pause before the simulation begins
@@ -89,7 +94,7 @@ begin
             READ(line, comma);
             READ(line, latency);
 
-            -- Randomly cause a stall
+            -- Randomly cause a fetch request stall
             uniform(stall_seed_a, stall_seed_b, stall_r);                    -- Generate a random number
             if (stall_r < (real(G_DECODE_ADDR_STALL_PROB)) / real(100)) then -- Decide if there is a stall
                 instr_addr_valid <= '0';                                         -- Invalidate request
@@ -119,8 +124,26 @@ begin
         wait;
     end process;
 
-    -- Model the Decode stage as always ready
-    instr_data_ready <= '1';
+    -- Process to control the READY signal at the fetch handoff
+    fetch_ready_proc : process is
+        variable stall_seed_a : integer := G_RANDOM_SEED_A;
+        variable stall_seed_b : integer := G_RANDOM_SEED_B;
+        variable stall_r      : real;
+    begin
+
+        -- Stall randomly by de-asserting the READY signal
+        uniform(stall_seed_a, stall_seed_b, stall_r);
+        if (stall_r < (real(G_DECODE_RDY_STALL_PROB) / real(100))) then
+            instr_data_ready <= '0';
+            for cyc in 0 to (G_DECODE_RDY_STALL_PENALTY - 1) loop
+                wait until rising_edge(clk);
+            end loop;
+        end if;
+
+        -- Otherwise, keep READY asserted
+        instr_data_ready <= '1';
+        wait until rising_edge(clk);
+    end process;
 
     ------------------------
     -- Instruction memory --
