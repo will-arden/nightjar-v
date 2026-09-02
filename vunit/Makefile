@@ -1,10 +1,21 @@
 SIM_LIST := frontend
 
-.PHONY: all clean sim-%
+.PHONY: all help clean sim-%
+
+all: help
 
 clean:
 	rm -rf test_artefacts/
 	rm -rf vunit_out/
+
+help:
+	@echo "\nTo run a simulation (e.g. "frontend"), enter the following command:"
+	@echo ">   make sim-frontend\n"
+	@echo "The list of available simulations is as follows:"
+	@for sim in $(SIM_LIST); do \
+		echo " - $$sim"; \
+	done;
+	@echo ""
 
 sim-%: clean
 
