@@ -1,4 +1,4 @@
-SIM_LIST := frontend
+SIM_LIST := cache
 
 .PHONY: all help clean sim-%
 
@@ -10,7 +10,7 @@ clean:
 
 help:
 	@echo "\nTo run a simulation (e.g. "frontend"), enter the following command:"
-	@echo ">   make sim-frontend\n"
+	@echo ">   make sim-cache\n"
 	@echo "The list of available simulations is as follows:"
 	@for sim in $(SIM_LIST); do \
 		echo " - $$sim"; \

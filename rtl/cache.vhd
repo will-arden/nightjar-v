@@ -11,7 +11,7 @@ entity cache is
         G_CACHE_WAYS         : natural := 4;       -- Number of cache ways
         G_CACHE_LINE_WIDTH   : natural := 4;       -- Width of each cache line in 32-bit increments (must be a power of 2)
         G_ASYNC_READ         : boolean := false;   -- When false, reads are performed asynchronously
-        G_REPLACEMENT_POLICY : string  := "simple" -- "simple", TODO: "round-robin", "pseudo-random", "replace-oldest"
+        G_REPLACEMENT_POLICY : string  := "simple" -- "simple", "round-robin", "pseudo-random", "replace-oldest"
     );
     port (
         clk : in std_logic;
@@ -68,6 +68,7 @@ architecture rtl of cache is
     signal next_way       : natural range 0 to (G_CACHE_WAYS - 1)       := 0;
     signal way_sel        : natural range 0 to (G_CACHE_WAYS - 1)       := 0;
     signal update_counter : natural range 0 to (G_CACHE_LINE_WIDTH - 1) := 0;
+
 begin
 
     -- Slice the tag, index and offset for the rd/wr addresses
@@ -112,8 +113,8 @@ begin
                 -- Only act when a cache write is in progress
                 if (cache_wr_en = '1') then
 
-                    -- Select the next way when the cache line is filled
-                    if (update_counter = (G_CACHE_LINE_WIDTH - 1) and cache_wr_en = '1') then
+                    -- Select the next way when the cache line is about to become filled
+                    if (update_counter = (G_CACHE_LINE_WIDTH - 2)) then
                         v_ptr := (set_ptr_array(to_uint(wr_index)) + 1) mod G_CACHE_WAYS;
                         set_ptr_array(to_uint(wr_index)) <= v_ptr;
                         next_way <= v_ptr;
@@ -123,8 +124,12 @@ begin
         end process;
     end generate;
 
-    -- TODO:
     -- "pseudo-random"
+    GEN_PSEUDO_RANDOM_NEXT_WAY : if (G_REPLACEMENT_POLICY = "psuedo-random") generate
+        
+    end generate;
+
+    -- TODO:
     -- "replace-oldest"
 
     -----------------------------------------------------
