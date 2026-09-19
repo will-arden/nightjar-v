@@ -7,11 +7,12 @@ use work.common_pkg.all;
 
 entity cache is
     generic (
-        G_CACHE_SETS         : natural := 16;      -- Number of cache sets (the depth of the cache)
-        G_CACHE_WAYS         : natural := 4;       -- Number of cache ways
-        G_CACHE_LINE_WIDTH   : natural := 4;       -- Width of each cache line in 32-bit increments (must be a power of 2)
-        G_ASYNC_READ         : boolean := false;   -- When false, reads are performed asynchronously
-        G_REPLACEMENT_POLICY : string  := "simple" -- "simple", "round-robin", "pseudo-random", "replace-oldest"
+        G_CACHE_SETS         : natural := 16;       -- Number of cache sets (the depth of the cache)
+        G_CACHE_WAYS         : natural := 4;        -- Number of cache ways
+        G_CACHE_LINE_WIDTH   : natural := 4;        -- Width of each cache line in 32-bit increments (must be a power of 2)
+        G_ASYNC_READ         : boolean := false;    -- When false, reads are performed asynchronously
+        G_REPLACEMENT_POLICY : string  := "simple"; -- "simple", "round-robin", "lfsr", "replace-oldest"
+        G_RANDOM_SEED        : natural := 48        -- Random seed for the cache replacement policy
     );
     port (
         clk : in std_logic;
@@ -44,9 +45,9 @@ architecture rtl of cache is
 
     -- Lines are grouped to form ways; a way is a single cache entry, selected using a "tag"
     type way_t is record
-        valid : std_logic;
-        tag   : std_logic_vector(C_TAG_BITS - 1 downto 0);
-        line  : line_t;
+        mask : std_logic_vector(G_CACHE_LINE_WIDTH - 1 downto 0); -- Indicates which instructions in the line are valid
+        tag  : std_logic_vector(C_TAG_BITS - 1 downto 0);
+        line : line_t;
     end record;
 
     -- Ways are grouped into sets, which are selected by an "index"
@@ -65,9 +66,10 @@ architecture rtl of cache is
     signal wr_tag    : std_logic_vector(C_TAG_BITS - 1 downto 0);
 
     -- Misc. signals
-    signal next_way       : natural range 0 to (G_CACHE_WAYS - 1)       := 0;
-    signal way_sel        : natural range 0 to (G_CACHE_WAYS - 1)       := 0;
-    signal update_counter : natural range 0 to (G_CACHE_LINE_WIDTH - 1) := 0;
+    signal next_way        : natural range 0 to (G_CACHE_WAYS - 1);
+    signal prev_way        : natural range 0 to (G_CACHE_WAYS - 1);
+    signal update_next_way : std_logic;
+    signal fill_counter    : natural range 0 to (G_CACHE_LINE_WIDTH - 1);
 
 begin
 
@@ -79,19 +81,95 @@ begin
     wr_index  <= cache_wr_addr((C_INDEX_BITS + C_OFFSET_BITS) - 1 downto C_OFFSET_BITS);
     wr_tag    <= cache_wr_addr((C_TAG_BITS + C_INDEX_BITS + C_OFFSET_BITS) - 1 downto (C_INDEX_BITS + C_OFFSET_BITS));
 
-    ---------------------------------------------------------------------
-    -- Implement a cache replacement policy; which way is overwritten? --
-    ---------------------------------------------------------------------
+    -----------------------
+    -- Cache write logic --
+    -----------------------
 
-    -- "simple" (a little bit random)
-    GEN_SIMPLE_NEXT_WAY : if (G_REPLACEMENT_POLICY = "simple") generate
+    cache_wr_proc : process (clk) is
+    begin
+        if (rising_edge(clk)) then
+
+            if (cache_wr_en = '1') then
+
+                -- If the tag is different, then whatever was previously in the cache should now be considered rubbish
+                -- FIXME: I think this is possibly problematic for d-cache, where it is possible for the memory to change.
+                --          You might need to re-write the same piece of data to the cache if it has changed in the memory.
+                --          So comparing tags won't work, because this assumes that the data in memory cannot change.
+                --          Can I not just invalidate every mask bit if the writer starts writing to a fully valid cache line?
+                --          Then, to protect against half-completed cache line fills being abandoned, if the fill counter
+                --          didn't reach the maximum value before a new address is used, then it should be completely invalidated.
+                --          But, the writer should bear responsibility if it writes rubbish into the cache. What if it did it
+                --          deliberately? Maybe I should:
+                --              -> If a fully-valid cache line is written to (at all), invalidate the entire line to store the new data
+                --              -> Allow the writer to abandon half-complete cache line fills. That's on them.
+
+                -- This introduces a new problem with the fill_counter. If a cache write is abandoned half-complete, the fill_counter
+                -- needs to return to 0 for the next cache line fill, but return to (say, 2) if it goes back to the half-complete one.
+                -- Perhaps the fill_count needs to really be equal to the ones count of the mask bits.
+
+                if (cache(to_uint(wr_index))(next_way).tag /= wr_tag) then
+                    cache(to_uint(wr_index))(next_way).mask <= (others => '0');
+                    fill_counter                            <= 1;
+                else
+                    fill_counter <= to_integer(to_unsigned(fill_counter, log2ceil(G_CACHE_LINE_WIDTH)) + 1); -- Increment the fill counter
+                end if;
+
+                -- Regardless, update the cache
+                cache(to_uint(wr_index))(next_way).mask(to_uint(wr_offset)) <= '1';           -- Update mask bit
+                cache(to_uint(wr_index))(next_way).tag                      <= wr_tag;        -- Update the tag (should be held for the duration of the cache line fill)
+                cache(to_uint(wr_index))(next_way).line(to_uint(wr_offset)) <= cache_wr_data; -- Update one slice of the cache line data
+            end if;
+
+            -- Initialise the cache on reset
+            if (rst = '1') then
+                for set in 0 to (G_CACHE_SETS - 1) loop
+                    for way in 0 to (G_CACHE_WAYS - 1) loop
+                        cache(set)(way).mask <= (others => '0');
+                    end loop;
+                end loop;
+                fill_counter <= 0;
+            end if;
+        end if;
+    end process;
+
+    --------------------------------------------------------------------------------------
+    -- Cache replacement policy; which way should be overwritten, if there is no space? --
+    --------------------------------------------------------------------------------------
+
+    -- Update the next way selection when the cache line is about to be filled
+    update_next_way <=
+        '1' when (fill_counter = (G_CACHE_LINE_WIDTH - 1)) else
+        '0';
+
+    GEN_REPLACEMENT_SIMPLE : if (G_REPLACEMENT_POLICY = "simple") generate
         next_way_proc : process (clk) is
         begin
             if (rising_edge(clk)) then
-                if (next_way = G_CACHE_WAYS - 1) then
+                if (update_next_way = '1') then
+                    next_way <= to_integer(to_unsigned(next_way, log2ceil(G_CACHE_WAYS)) + 1);
+                end if;
+                if (rst = '1') then
                     next_way <= 0;
-                else
-                    next_way <= next_way + 1;
+                end if;
+            end if;
+        end process;
+    end generate;
+
+    GEN_REPLACEMENT_LFSR : if (G_REPLACEMENT_POLICY = "lfsr") generate
+        signal lfsr : std_logic_vector(7 downto 0);
+    begin
+        next_way_proc : process (clk) is
+        begin
+            if (rising_edge(clk)) then
+                lfsr <= lfsr(6 downto 0) & (lfsr(7) xor lfsr(5) xor lfsr(4) xor lfsr(3));
+
+                if (update_next_way = '1') then
+                    next_way <= to_integer(unsigned(lfsr(7 downto (8 - log2ceil(G_CACHE_WAYS)))));
+                end if;
+
+                if (rst = '1') then
+                    lfsr     <= std_logic_vector(to_unsigned(G_RANDOM_SEED, lfsr'length));
+                    next_way <= 0;
                 end if;
             end if;
         end process;
@@ -109,142 +187,10 @@ begin
             variable v_ptr : natural range 0 to (G_CACHE_WAYS - 1);
         begin
             if (rising_edge(clk)) then
-
-                -- Only act when a cache write is in progress
-                if (cache_wr_en = '1') then
-
-                    -- Select the next way when the cache line is about to become filled
-                    if (update_counter = (G_CACHE_LINE_WIDTH - 2)) then
-                        v_ptr := (set_ptr_array(to_uint(wr_index)) + 1) mod G_CACHE_WAYS;
-                        set_ptr_array(to_uint(wr_index)) <= v_ptr;
-                        next_way <= v_ptr;
-                    end if;
-                end if;
-            end if;
-        end process;
-    end generate;
-
-    -- "pseudo-random"
-    GEN_PSEUDO_RANDOM_NEXT_WAY : if (G_REPLACEMENT_POLICY = "psuedo-random") generate
-        
-    end generate;
-
-    -- TODO:
-    -- "replace-oldest"
-
-    -----------------------------------------------------
-    -- Write synchronously to the cache during updates --
-    -----------------------------------------------------
-
-    cache_wr_proc : process (clk) is
-    begin
-        if (rising_edge(clk)) then
-
-            -- Count the progress of the cache line update
-            if (cache_wr_en = '1') then
-                if (update_counter = (G_CACHE_LINE_WIDTH - 1)) then
-                    update_counter <= 0;
-                else
-                    update_counter <= update_counter + 1;
-                end if;
-            end if;
-
-            -- When the counter expires, the cache line update is complete
-            if (update_counter = (G_CACHE_LINE_WIDTH - 1) and cache_wr_en = '1') then
-                way_sel                                 <= next_way; -- Choose a new way for the next update
-                cache(to_uint(wr_index))(way_sel).valid <= '1';      -- Validate the way
-            end if;
-
-            -- Write to the cache
-            if (cache_wr_en = '1') then
-                cache(to_uint(wr_index))(way_sel).tag                      <= wr_tag;        -- Update the tag
-                cache(to_uint(wr_index))(way_sel).line(to_uint(wr_offset)) <= cache_wr_data; -- Update one slice of the line
-            end if;
-
-            -- Reset
-            if (rst = '1') then
-                way_sel <= 0;
-                for set in 0 to (G_CACHE_SETS - 1) loop
-                    for way in 0 to (G_CACHE_WAYS - 1) loop
-                        cache(set)(way).valid <= '0';
-                    end loop;
-                end loop;
-            end if;
-        end if;
-    end process;
-
-    -------------------------------
-    -- Asynchronous cache reads --
-    -------------------------------
-
-    GEN_ASYNC_CACHE_READ : if (G_ASYNC_READ) generate
-        cache_rd_proc : process (cache, rd_index, cache_rd_en, cache_rd_data, rd_tag, rd_offset) is
-            variable found : boolean;
-            variable ln    : line_t;
-        begin
-            if (cache_rd_en = '1') then
-                found := false;
-
-                -- Check each way of the indexed set
-                for w in 0 to (G_CACHE_WAYS - 1) loop
-                    if (cache(to_uint(rd_index))(w).valid = '1') then  -- Only check valid entries
-                        if (cache(to_uint(rd_index))(w).tag = rd_tag) then -- Match the way's tag
-                            found := true;
-                            ln    := cache(to_uint(rd_index))(w).line;
-                        end if;
-                    end if;
-                end loop;
-
-                -- Slice the requested instruction from the line
-                cache_rd_data <= ln(to_uint(rd_offset));
-
-                -- Assert the "hit" flag
-                if (found) then
-                    cache_rd_hit <= '1';
-                else
-                    cache_rd_hit <= '0';
-                end if;
-            end if;
-        end process;
-    end generate;
-
-    -----------------------------
-    -- Synchronous cache reads --
-    -----------------------------
-
-    GEN_SYNC_CACHE_READ : if (not G_ASYNC_READ) generate
-        cache_rd_proc : process (clk) is
-            variable found : boolean;
-            variable ln    : line_t;
-        begin
-            if (rising_edge(clk)) then
-                if (cache_rd_en = '1') then
-                    found := false;
-
-                    -- Check each way of the indexed set
-                    for w in 0 to (G_CACHE_WAYS - 1) loop
-                        if (cache(to_uint(rd_index))(w).valid = '1') then  -- Only check valid entries
-                            if (cache(to_uint(rd_index))(w).tag = rd_tag) then -- Match the way's tag
-                                found := true;
-                                ln    := cache(to_uint(rd_index))(w).line;
-                            end if;
-                        end if;
-                    end loop;
-
-                    -- Slice the requested instruction from the line
-                    cache_rd_data <= ln(to_uint(rd_offset));
-
-                    -- Assert the "hit" flag
-                    if (found) then
-                        cache_rd_hit <= '1';
-                    else
-                        cache_rd_hit <= '0';
-                    end if;
-                end if;
-
-                -- Reset
-                if (rst = '1') then
-                    cache_rd_hit <= '0';
+                if (update_next_way) then
+                    v_ptr := (set_ptr_array(to_uint(wr_index)) + 1) mod G_CACHE_WAYS;
+                    set_ptr_array(to_uint(wr_index)) <= v_ptr;
+                    next_way                         <= v_ptr;
                 end if;
             end if;
         end process;

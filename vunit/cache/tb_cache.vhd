@@ -80,23 +80,22 @@ begin
         procedure cache_write (addr : std_logic_vector(31 downto 0); data : std_logic_vector(31 downto 0)) is
         begin
             info("WRITING " & to_hstring(data) & "@ ADDRESS " & to_hstring(addr));
-
-            -- Write data to the cache
             cache_wr_en   <= '1';
             cache_wr_addr <= addr;
             cache_wr_data <= data;
             wait until rising_edge(clk);
             cache_wr_en <= '0';
-
         end procedure;
 
-        variable v_addr : std_logic_vector(31 downto 0) := (others => '0');
+        variable v_addr     : std_logic_vector(31 downto 0) := (others => '0');
+        variable v_tag_base : natural                       := 0;
     begin
         test_runner_setup(runner, runner_cfg);
         while test_suite loop
             if run("test_0") then
                 info("Beginning cache simulation...");
                 wait until (rst = '0');
+                wait for (10 * C_CLK_PERIOD);
                 wait until rising_edge(clk);
 
                 -- Update every set by populating the cache line of a single way
@@ -105,16 +104,26 @@ begin
                         for x in 0 to (G_CACHE_LINE_WIDTH - 1) loop
 
                             -- Compute the write address
-                            v_addr                                                                                        := (others => '0');                                     -- Re-initialise
-                            v_addr(C_OFFSET_BITS - 1 downto 0)                                                            := std_logic_vector(to_unsigned(4 * x, C_OFFSET_BITS)); -- Offset bits
-                            v_addr((C_INDEX_BITS + C_OFFSET_BITS) - 1 downto C_OFFSET_BITS)                               := std_logic_vector(to_unsigned(s, C_INDEX_BITS));      -- Set bits
-                            v_addr((C_TAG_BITS + C_INDEX_BITS + C_OFFSET_BITS) - 1 downto (C_INDEX_BITS + C_OFFSET_BITS)) := std_logic_vector(to_unsigned(w, C_TAG_BITS));        -- Give every way a different tag
+                            v_addr                                                                                        := (others => '0');                                           -- Re-initialise
+                            v_addr(C_OFFSET_BITS - 1 downto 0)                                                            := std_logic_vector(to_unsigned(4 * x, C_OFFSET_BITS));       -- Offset bits
+                            v_addr((C_INDEX_BITS + C_OFFSET_BITS) - 1 downto C_OFFSET_BITS)                               := std_logic_vector(to_unsigned(s, C_INDEX_BITS));            -- Set bits
+                            v_addr((C_TAG_BITS + C_INDEX_BITS + C_OFFSET_BITS) - 1 downto (C_INDEX_BITS + C_OFFSET_BITS)) := std_logic_vector(to_unsigned(w + v_tag_base, C_TAG_BITS)); -- Give every way a different tag
 
                             -- Perform the write
-                            cache_write(v_addr, std_logic_vector(to_unsigned(s, 32)));
+                            cache_write(v_addr, std_logic_vector(to_unsigned(w, 32)));
 
                         end loop;
                     end loop;
+                    wait until rising_edge(clk);
+
+                    -- Re-initialise the address and change the tag base to something new (imagine a new region of memory is being written)
+                    v_tag_base := v_tag_base + 1;
+                    v_addr := (others => '0');
+                    v_addr((C_TAG_BITS + C_INDEX_BITS + C_OFFSET_BITS) - 1 downto (C_INDEX_BITS + C_OFFSET_BITS)) := std_logic_vector(to_unsigned(w + v_tag_base, C_TAG_BITS)); -- Give every way a different tag
+                    
+                    
+                    cache_write(v_addr, std_logic_vector(to_unsigned(48, 32)));
+                    cache_write(v_addr, std_logic_vector(to_unsigned(72, 32)));
                 end loop;
 
                 wait for 100 * C_CLK_PERIOD;
