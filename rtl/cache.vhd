@@ -22,6 +22,7 @@ entity cache is
         cache_rd_en   : in std_logic;
         cache_rd_addr : in std_logic_vector(31 downto 0);
         cache_rd_data : out std_logic_vector(31 downto 0);
+        cache_rd_mask : out std_logic_vector(G_CACHE_LINE_WIDTH - 1 downto 0);
         cache_rd_hit  : out std_logic;
 
         -- Cache write interface
@@ -46,9 +47,10 @@ architecture rtl of cache is
 
     -- Lines are grouped to form ways; a way is a single cache entry, selected using a "tag"
     type way_t is record
-        mask : std_logic_vector(G_CACHE_LINE_WIDTH - 1 downto 0); -- Indicates which instructions in the line are valid
-        tag  : std_logic_vector(C_TAG_BITS - 1 downto 0);
-        line : line_t;
+        valid : std_logic;
+        mask  : std_logic_vector(G_CACHE_LINE_WIDTH - 1 downto 0); -- Indicates which instructions in the line are valid
+        tag   : std_logic_vector(C_TAG_BITS - 1 downto 0);
+        line  : line_t;
     end record;
 
     -- Ways are grouped into sets, which are selected by an "index"
@@ -67,8 +69,8 @@ architecture rtl of cache is
     signal wr_tag    : std_logic_vector(C_TAG_BITS - 1 downto 0);
 
     -- Misc. signals
-    signal next_way          : natural range 0 to (G_CACHE_WAYS - 1);
-    signal update_next_way   : std_logic;
+    signal next_way         : natural range 0 to (G_CACHE_WAYS - 1);
+    signal update_next_way  : std_logic;
     signal fill_in_progress : std_logic;
 
 begin
@@ -93,7 +95,8 @@ begin
 
                 -- Invalidate the cache line (as not to conflate old data with new data), unless this is part of the cache line update in progress
                 if (fill_in_progress = '0') then
-                    cache(to_uint(wr_index))(next_way).mask <= (others => '0');
+                    cache(to_uint(wr_index))(next_way).valid <= '0';
+                    cache(to_uint(wr_index))(next_way).mask  <= (others => '0');
                 end if;
 
                 -- Regardless, update the cache
@@ -101,8 +104,9 @@ begin
                 cache(to_uint(wr_index))(next_way).tag                      <= wr_tag;        -- Update the tag (should be held for the duration of the cache line fill)
                 cache(to_uint(wr_index))(next_way).line(to_uint(wr_offset)) <= cache_wr_data; -- Update one slice of the cache line data
 
-                -- Register when a cache line fill has been marked as complete
-                fill_in_progress <= not cache_wr_last;
+                -- Evaluate the cache_wr_last signal
+                cache(to_uint(wr_index))(next_way).valid <= cache_wr_last;     -- When the cache line fill is complete, mark it as valid                
+                fill_in_progress                         <= not cache_wr_last; -- Register when a cache line fill has been marked as complete
 
             end if;
 
@@ -110,7 +114,8 @@ begin
             if (rst = '1') then
                 for set in 0 to (G_CACHE_SETS - 1) loop
                     for way in 0 to (G_CACHE_WAYS - 1) loop
-                        cache(set)(way).mask <= (others => '0');
+                        cache(set)(way).valid <= '0';
+                        cache(set)(way).mask  <= (others => '0');
                     end loop;
                 end loop;
                 fill_in_progress <= '0';

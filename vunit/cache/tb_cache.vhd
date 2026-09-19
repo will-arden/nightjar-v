@@ -34,6 +34,7 @@ architecture tb of tb_cache is
     signal cache_rd_en   : std_logic                     := '0';
     signal cache_rd_addr : std_logic_vector(31 downto 0) := (others => '0');
     signal cache_rd_data : std_logic_vector(31 downto 0);
+    signal cache_rd_mask : std_logic_vector(G_CACHE_LINE_WIDTH - 1 downto 0);
     signal cache_rd_hit  : std_logic;
     signal cache_wr_en   : std_logic                     := '0';
     signal cache_wr_addr : std_logic_vector(31 downto 0) := (others => '0');
@@ -65,6 +66,7 @@ begin
             cache_rd_en   => cache_rd_en,
             cache_rd_addr => cache_rd_addr,
             cache_rd_data => cache_rd_data,
+            cache_rd_mask => cache_rd_mask,
             cache_rd_hit  => cache_rd_hit,
             cache_wr_en   => cache_wr_en,
             cache_wr_addr => cache_wr_addr,
