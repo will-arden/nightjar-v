@@ -11,6 +11,8 @@ package common_pkg is
     function to_std_logic(bool : boolean) return std_logic;
     function slv_uadd (slv : std_logic_vector; num : integer) return std_logic_vector;
     function pad (slv : std_logic_vector; n : positive) return std_logic_vector;
+    function ones_count (slv   : std_logic_vector) return natural;
+    function zeros_count (slv  : std_logic_vector) return natural;
 
 end package common_pkg;
 
@@ -70,5 +72,27 @@ package body common_pkg is
         padded(slv'length - 1 downto 0) := slv;
         return padded;
     end function pad;
+
+    function ones_count(slv : std_logic_vector) return natural is
+        variable v_count        : natural := 0;
+    begin
+        for b in 0 to (slv'length - 1) loop
+            if (slv(b) = '1') then
+                v_count := v_count + 1;
+            end if;
+        end loop;
+        return v_count;
+    end function;
+
+    function zeros_count(slv : std_logic_vector) return natural is
+        variable v_count         : natural := 0;
+    begin
+        for b in 0 to (slv'length - 1) loop
+            if (slv(b) = '0') then
+                v_count := v_count + 1;
+            end if;
+        end loop;
+        return v_count;
+    end function;
 
 end package body;
