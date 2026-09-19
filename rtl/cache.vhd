@@ -27,7 +27,8 @@ entity cache is
         -- Cache write interface
         cache_wr_en   : in std_logic;
         cache_wr_addr : in std_logic_vector(31 downto 0);
-        cache_wr_data : in std_logic_vector(31 downto 0)
+        cache_wr_data : in std_logic_vector(31 downto 0);
+        cache_wr_last : in std_logic
     );
 end entity;
 
@@ -66,10 +67,9 @@ architecture rtl of cache is
     signal wr_tag    : std_logic_vector(C_TAG_BITS - 1 downto 0);
 
     -- Misc. signals
-    signal next_way        : natural range 0 to (G_CACHE_WAYS - 1);
-    signal prev_way        : natural range 0 to (G_CACHE_WAYS - 1);
-    signal update_next_way : std_logic;
-    signal fill_counter    : natural range 0 to (G_CACHE_LINE_WIDTH - 1);
+    signal next_way          : natural range 0 to (G_CACHE_WAYS - 1);
+    signal update_next_way   : std_logic;
+    signal fill_in_progress : std_logic;
 
 begin
 
@@ -91,33 +91,19 @@ begin
 
             if (cache_wr_en = '1') then
 
-                -- If the tag is different, then whatever was previously in the cache should now be considered rubbish
-                -- FIXME: I think this is possibly problematic for d-cache, where it is possible for the memory to change.
-                --          You might need to re-write the same piece of data to the cache if it has changed in the memory.
-                --          So comparing tags won't work, because this assumes that the data in memory cannot change.
-                --          Can I not just invalidate every mask bit if the writer starts writing to a fully valid cache line?
-                --          Then, to protect against half-completed cache line fills being abandoned, if the fill counter
-                --          didn't reach the maximum value before a new address is used, then it should be completely invalidated.
-                --          But, the writer should bear responsibility if it writes rubbish into the cache. What if it did it
-                --          deliberately? Maybe I should:
-                --              -> If a fully-valid cache line is written to (at all), invalidate the entire line to store the new data
-                --              -> Allow the writer to abandon half-complete cache line fills. That's on them.
-
-                -- This introduces a new problem with the fill_counter. If a cache write is abandoned half-complete, the fill_counter
-                -- needs to return to 0 for the next cache line fill, but return to (say, 2) if it goes back to the half-complete one.
-                -- Perhaps the fill_count needs to really be equal to the ones count of the mask bits.
-
-                if (cache(to_uint(wr_index))(next_way).tag /= wr_tag) then
+                -- Invalidate the cache line (as not to conflate old data with new data), unless this is part of the cache line update in progress
+                if (fill_in_progress = '0') then
                     cache(to_uint(wr_index))(next_way).mask <= (others => '0');
-                    fill_counter                            <= 1;
-                else
-                    fill_counter <= to_integer(to_unsigned(fill_counter, log2ceil(G_CACHE_LINE_WIDTH)) + 1); -- Increment the fill counter
                 end if;
 
                 -- Regardless, update the cache
                 cache(to_uint(wr_index))(next_way).mask(to_uint(wr_offset)) <= '1';           -- Update mask bit
                 cache(to_uint(wr_index))(next_way).tag                      <= wr_tag;        -- Update the tag (should be held for the duration of the cache line fill)
                 cache(to_uint(wr_index))(next_way).line(to_uint(wr_offset)) <= cache_wr_data; -- Update one slice of the cache line data
+
+                -- Register when a cache line fill has been marked as complete
+                fill_in_progress <= not cache_wr_last;
+
             end if;
 
             -- Initialise the cache on reset
@@ -127,7 +113,7 @@ begin
                         cache(set)(way).mask <= (others => '0');
                     end loop;
                 end loop;
-                fill_counter <= 0;
+                fill_in_progress <= '0';
             end if;
         end if;
     end process;
@@ -136,10 +122,8 @@ begin
     -- Cache replacement policy; which way should be overwritten, if there is no space? --
     --------------------------------------------------------------------------------------
 
-    -- Update the next way selection when the cache line is about to be filled
-    update_next_way <=
-        '1' when (fill_counter = (G_CACHE_LINE_WIDTH - 1)) else
-        '0';
+    -- Update the next way selection when the cache line fill is about to be completed
+    update_next_way <= cache_wr_en and cache_wr_last;
 
     GEN_REPLACEMENT_SIMPLE : if (G_REPLACEMENT_POLICY = "simple") generate
         next_way_proc : process (clk) is
@@ -191,6 +175,9 @@ begin
                     v_ptr := (set_ptr_array(to_uint(wr_index)) + 1) mod G_CACHE_WAYS;
                     set_ptr_array(to_uint(wr_index)) <= v_ptr;
                     next_way                         <= v_ptr;
+                end if;
+                if (rst = '1') then
+                    next_way <= 0;
                 end if;
             end if;
         end process;
