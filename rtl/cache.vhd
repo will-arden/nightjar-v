@@ -10,8 +10,9 @@ entity cache is
         G_CACHE_SETS         : natural := 16;       -- Number of cache sets (the depth of the cache)
         G_CACHE_WAYS         : natural := 4;        -- Number of cache ways
         G_CACHE_LINE_WIDTH   : natural := 4;        -- Width of each cache line in 32-bit increments (must be a power of 2)
-        G_ASYNC_READ         : boolean := false;    -- When false, reads are performed asynchronously
-        G_REPLACEMENT_POLICY : string  := "simple"; -- "simple", "round-robin", "lfsr", "replace-oldest"
+        G_ASYNC_READ         : boolean := false;    -- TODO: Not implemented; When false, reads are performed asynchronously
+        G_REQUIRE_FULL_LINE  : boolean := false;    -- TODO: Not implemented; When true, the cache_wr_last signal can be ignored and the cache will always expect updates to fill the entire line
+        G_REPLACEMENT_POLICY : string  := "simple"; -- "simple", "round-robin", "lfsr", TODO: Not implemented; "replace-oldest"
         G_RANDOM_SEED        : natural := 48        -- Random seed for the cache replacement policy
     );
     port (
@@ -67,8 +68,8 @@ architecture rtl of cache is
     signal wr_tag    : std_logic_vector(C_TAG_BITS - 1 downto 0);
 
     -- Misc. signals
-    signal next_way          : natural range 0 to (G_CACHE_WAYS - 1);
-    signal update_next_way   : std_logic;
+    signal next_way         : natural range 0 to (G_CACHE_WAYS - 1);
+    signal update_next_way  : std_logic;
     signal fill_in_progress : std_logic;
 
 begin
@@ -80,6 +81,51 @@ begin
     wr_offset <= cache_wr_addr(C_OFFSET_BITS - 1 downto 2);
     wr_index  <= cache_wr_addr((C_INDEX_BITS + C_OFFSET_BITS) - 1 downto C_OFFSET_BITS);
     wr_tag    <= cache_wr_addr((C_TAG_BITS + C_INDEX_BITS + C_OFFSET_BITS) - 1 downto (C_INDEX_BITS + C_OFFSET_BITS));
+
+    -----------------------------
+    -- Synchronous cache reads --
+    -----------------------------
+
+    GEN_SYNC_CACHE_READ : if (not G_ASYNC_READ) generate
+        cache_rd_proc : process (clk) is
+            variable found : boolean;
+            variable ln    : line_t;
+        begin
+            if (rising_edge(clk)) then
+                if (cache_rd_en = '1') then
+                    found := false;
+                    ln    := (others => (others => '0'));
+
+                    -- Check each way of the indexed set
+                    for way in 0 to (G_CACHE_WAYS - 1) loop
+                        if (cache(to_uint(rd_index))(way).mask(to_uint(rd_offset)) = '1') then -- Only check valid instructions
+                            if (cache(to_uint(rd_index))(way).tag = rd_tag) then                   -- Match the way's tag
+                                found := true;
+                                ln    := cache(to_uint(rd_index))(way).line;
+                                exit;
+                            end if;
+                        end if;
+                    end loop;
+
+                    -- Slice the requested instruction from the line
+                    cache_rd_data <= ln(to_uint(rd_offset));
+
+                    -- Assert the "hit" flag
+                    if (found) then
+                        cache_rd_hit <= '1';
+                    else
+                        cache_rd_hit <= '0';
+                    end if;
+                end if;
+
+                -- Initialise outputs on reset
+                if (rst = '1') then
+                    cache_rd_hit  <= '0';
+                    cache_rd_data <= (others => '0');
+                end if;
+            end if;
+        end process;
+    end generate;
 
     -----------------------
     -- Cache write logic --
