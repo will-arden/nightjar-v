@@ -19,17 +19,41 @@ entity cache is
         clk : in std_logic;
         rst : in std_logic;
 
+        --------------------------------------------
+        -- Inward-facing interfaces (to/from CPU) --
+        --------------------------------------------
+
         -- Cache read interface
-        cache_rd_en   : in std_logic;
-        cache_rd_addr : in std_logic_vector(31 downto 0);
-        cache_rd_data : out std_logic_vector(31 downto 0);
-        cache_rd_hit  : out std_logic;
+        cache_rd_valid : out std_logic; -- Read data is valid
+        cache_rd_ready : in std_logic; -- TODO: This can be removed I think? It's not necessary?
+        cache_rd_en    : in std_logic; -- Request a read
+        cache_rd_addr  : in std_logic_vector(31 downto 0);
+        cache_rd_data  : out std_logic_vector(31 downto 0);
+        cache_rd_hit   : out std_logic;
 
         -- Cache write interface
-        cache_wr_en   : in std_logic;
-        cache_wr_addr : in std_logic_vector(31 downto 0);
-        cache_wr_data : in std_logic_vector(31 downto 0);
-        cache_wr_last : in std_logic
+        cache_wr_valid : in std_logic;
+        cache_wr_ready : out std_logic;
+        cache_wr_addr  : in std_logic_vector(31 downto 0);
+        cache_wr_data  : in std_logic_vector(31 downto 0);
+        cache_wr_last  : in std_logic;
+
+        ------------------------------------------------
+        -- Outward-facing interfaces (to/from memory) --
+        ------------------------------------------------
+
+        -- Load/store request interface (to Wishbone memory controller)
+        mem_req_valid : out std_logic;
+        mem_req_ready : in std_logic;
+        mem_req_store : out std_logic; -- '0': Load; '1': Store
+        mem_req_addr  : out std_logic_vector(31 downto 0);
+        mem_req_data  : out std_logic_vector(31 downto 0);
+
+        -- Load/store request response interface (from Wishbone memory controller)
+        mem_resp_valid : in std_logic;
+        mem_resp_ready : out std_logic;
+        mem_resp_data  : in std_logic_vector(31 downto 0);
+        mem_resp_err   : in std_logic
     );
 end entity;
 
@@ -131,11 +155,14 @@ begin
     -- Cache write logic --
     -----------------------
 
+    -- TODO: For now, imagine that the cache is always ready for writes
+    cache_wr_ready <= '1';
+
     cache_wr_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
 
-            if (cache_wr_en = '1') then
+            if (cache_wr_valid = '1' and cache_wr_ready = '1') then
 
                 -- Invalidate the cache line (as not to conflate old data with new data), unless this is part of the cache line update in progress
                 if (fill_in_progress = '0') then
@@ -169,7 +196,7 @@ begin
     --------------------------------------------------------------------------------------
 
     -- Update the next way selection when the cache line fill is about to be completed
-    update_next_way <= cache_wr_en and cache_wr_last;
+    update_next_way <= cache_wr_valid and cache_wr_last;
 
     GEN_REPLACEMENT_SIMPLE : if (G_REPLACEMENT_POLICY = "simple") generate
         next_way_proc : process (clk) is

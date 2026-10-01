@@ -29,16 +29,28 @@ architecture tb of tb_cache is
     constant C_TAG_BITS    : natural := 32 - C_INDEX_BITS - C_OFFSET_BITS;
 
     -- Ports
-    signal clk           : std_logic                     := '0';
-    signal rst           : std_logic                     := '0';
-    signal cache_rd_en   : std_logic                     := '0';
-    signal cache_rd_addr : std_logic_vector(31 downto 0) := (others => '0');
-    signal cache_rd_data : std_logic_vector(31 downto 0);
-    signal cache_rd_hit  : std_logic;
-    signal cache_wr_en   : std_logic                     := '0';
-    signal cache_wr_addr : std_logic_vector(31 downto 0) := (others => '0');
-    signal cache_wr_data : std_logic_vector(31 downto 0) := (others => '0');
-    signal cache_wr_last : std_logic                     := '0';
+    signal clk            : std_logic := '0';
+    signal rst            : std_logic := '0';
+    signal cache_rd_valid : std_logic;
+    signal cache_rd_ready : std_logic                     := '0';
+    signal cache_rd_en    : std_logic                     := '0';
+    signal cache_rd_addr  : std_logic_vector(31 downto 0) := (others => '0');
+    signal cache_rd_data  : std_logic_vector(31 downto 0);
+    signal cache_rd_hit   : std_logic;
+    signal cache_wr_valid : std_logic := '0';
+    signal cache_wr_ready : std_logic;
+    signal cache_wr_addr  : std_logic_vector(31 downto 0) := (others => '0');
+    signal cache_wr_data  : std_logic_vector(31 downto 0) := (others => '0');
+    signal cache_wr_last  : std_logic                     := '0';
+    signal mem_req_valid  : std_logic                     := '0';
+    signal mem_req_ready  : std_logic;
+    signal mem_req_store  : std_logic;
+    signal mem_req_addr   : std_logic_vector(31 downto 0);
+    signal mem_req_data   : std_logic_vector(31 downto 0);
+    signal mem_resp_valid : std_logic;
+    signal mem_resp_ready : std_logic := '0';
+    signal mem_resp_data  : std_logic_vector(31 downto 0);
+    signal mem_resp_err   : std_logic;
 
 begin
 
@@ -60,16 +72,32 @@ begin
         )
         port map
         (
-            clk           => clk,
-            rst           => rst,
-            cache_rd_en   => cache_rd_en,
-            cache_rd_addr => cache_rd_addr,
-            cache_rd_data => cache_rd_data,
-            cache_rd_hit  => cache_rd_hit,
-            cache_wr_en   => cache_wr_en,
-            cache_wr_addr => cache_wr_addr,
-            cache_wr_data => cache_wr_data,
-            cache_wr_last => cache_wr_last
+            clk => clk,
+            rst => rst,
+
+            cache_rd_valid => cache_rd_valid,
+            cache_rd_ready => cache_rd_ready,
+            cache_rd_en    => cache_rd_en,
+            cache_rd_addr  => cache_rd_addr,
+            cache_rd_data  => cache_rd_data,
+            cache_rd_hit   => cache_rd_hit,
+
+            cache_wr_valid => cache_wr_valid,
+            cache_wr_ready => cache_wr_ready,
+            cache_wr_addr  => cache_wr_addr,
+            cache_wr_data  => cache_wr_data,
+            cache_wr_last  => cache_wr_last,
+
+            mem_req_valid => mem_req_valid,
+            mem_req_ready => mem_req_ready,
+            mem_req_store => mem_req_store,
+            mem_req_addr  => mem_req_addr,
+            mem_req_data  => mem_req_data,
+
+            mem_resp_valid => mem_resp_valid,
+            mem_resp_ready => mem_resp_ready,
+            mem_resp_data  => mem_resp_data,
+            mem_resp_err   => mem_resp_err
         );
 
     -----------------
@@ -82,12 +110,15 @@ begin
         procedure cache_write (addr : std_logic_vector(31 downto 0); data : std_logic_vector(31 downto 0); last : std_logic) is
         begin
             info("WRITING " & to_hstring(data) & "@ ADDRESS " & to_hstring(addr));
-            cache_wr_en   <= '1';
-            cache_wr_addr <= addr;
-            cache_wr_data <= data;
-            cache_wr_last <= last;
+            cache_wr_valid <= '1';
+            cache_wr_addr  <= addr;
+            cache_wr_data  <= data;
+            cache_wr_last  <= last;
             wait until rising_edge(clk);
-            cache_wr_en <= '0';
+            while (cache_wr_ready /= '1') loop
+                wait until rising_edge(clk);
+            end loop;
+            cache_wr_valid <= '0';
         end procedure;
 
         variable v_addr     : std_logic_vector(31 downto 0) := (others => '0');
