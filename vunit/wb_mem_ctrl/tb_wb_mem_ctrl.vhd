@@ -10,7 +10,8 @@ entity tb_wb_mem_ctrl is
     generic (
         runner_cfg   : string;
         G_ADDR_WIDTH : positive := 32;
-        G_DATA_WIDTH : positive := 32
+        G_DATA_WIDTH : positive := 32;
+        G_MEM_DEPTH  : positive := 1024
     );
 end;
 
@@ -45,11 +46,15 @@ architecture tb of tb_wb_mem_ctrl is
     signal wb_mem_rd_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal wb_mem_wr_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
+    -- Reference memory
+    type mem_t is array (0 to G_MEM_DEPTH - 1) of std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal ref_mem : mem_t := (others => (others => '0'));
+
 begin
 
     -- Generate clock and reset
     clk <= not clk after (C_CLK_PERIOD / 2);
-    rst <= '0', '1' after (10 * C_CLK_PERIOD);
+    rst <= '1', '0' after (10 * C_CLK_PERIOD);
 
     ---------------------
     -- Instantiate DUT --
@@ -93,13 +98,55 @@ begin
     -----------------
 
     main : process is
+
+        -- Procedure to request a write
+        procedure wr_req (addr : in std_logic_vector; data : in std_logic_vector; byte_en : in std_logic_vector; timeout : in positive) is
+            variable v_timer : natural := 0;
+        begin
+            report "New write request (address = 0x" & to_hstring(addr) & ", data = 0x" & to_hstring(data) & ")";
+            ref_mem(to_integer(unsigned(addr(addr'high downto 2)))) <= data; -- Update the reference memory
+
+            -- Issue the request
+            wr_req_valid   <= '1';
+            wr_req_addr    <= addr;
+            wr_req_data    <= data;
+            wr_req_byte_en <= byte_en;
+            wait until rising_edge(clk);
+            while (wr_req_ready = '0') loop
+                v_timer := v_timer + 1;
+                assert (v_timer < timeout) report "Write request failed; timeout reached." severity failure;
+                wait until rising_edge(clk);
+            end loop;
+            wr_req_valid <= '0';
+        end procedure;
+
     begin
         test_runner_setup(runner, runner_cfg);
         while test_suite loop
             if run("test_0") then
                 info("Beginning wb_mem_ctrl test...");
 
-                -- Test goes here
+                -- Default signal assigments
+                rd_req_valid   <= '0';
+                rd_req_addr    <= (others => '0');
+                wr_req_valid   <= '0';
+                wr_req_addr    <= (others => '0');
+                wr_req_byte_en <= (others => '1');
+                wr_req_data    <= (others => '0');
+                rd_resp_ready  <= '0';
+                wait until rst = '0';
+                wait for (5 * C_CLK_PERIOD);
+                wait until rising_edge(clk);
+
+                -- Request several writes
+                for i in 0 to 0 loop
+                    wr_req(
+                    addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
+                    data    => std_logic_vector(to_unsigned((i * 4) + 1, G_DATA_WIDTH)),
+                    byte_en => (wr_req_byte_en'range => '0'),
+                    timeout => 500
+                    );
+                end loop;
 
                 wait for (100 * C_CLK_PERIOD);
                 test_runner_cleanup(runner);
