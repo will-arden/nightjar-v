@@ -1,0 +1,11 @@
+--------------------------------------------------------------------------------------------------
+--                                      ~   nightjar-v   ~                                      --
+--------------------------------------------------------------------------------------------------
+-- Filename:    header.vhd
+-- Author:      Will Arden
+-- Date:        3rd October 2026
+-- Brief:       Standard VHDL file header for the nightjar-v project.
+-- Description: This is an example of a VHDL file header for the nightjar-v project.
+-- Remarks:     Anything especially important should be stated here.
+--------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------
