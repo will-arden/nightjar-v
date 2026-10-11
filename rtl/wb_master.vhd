@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------------------------
 -- Filename:    wb_master.vhd
 -- Author:      Will Arden
--- Date:        3rd October 2026
+-- Date:        11th October 2026
 -- Brief:       Wishbone memory controller.
 -- Description: This is a Wishbone memory controller which can accept read/write requests and act
 --              accordingly over the Wishbone interface to external memory. This module is
@@ -162,6 +162,10 @@ begin
         '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
         '0';
 
+    --------------------------------
+    -- Finite State Machine (FSM) --
+    --------------------------------
+
     -- Asynchronous process to determine the next state
     next_state_proc : process (state, wr_req_valid, wr_req_ready, rd_req_valid, rd_req_ready, wb_mem_ack, wb_mem_err, wb_mem_rty, rty_timer) is
     begin
@@ -229,14 +233,14 @@ begin
 
                         -- Otherwise, the STB state must've been triggered by a new request
                     else
-                        wb_mem_addr    <= wr_req_addr;
-                        wb_mem_wr_data <= wr_req_data;
-                        wb_mem_byte_en <= wr_req_byte_en;
-
                         if (F_GET_NEXT_REQ = WR) then
-                            wb_mem_wr_en <= '1';
+                            wb_mem_wr_en   <= '1';
+                            wb_mem_addr    <= wr_req_addr;
+                            wb_mem_wr_data <= wr_req_data;
+                            wb_mem_byte_en <= wr_req_byte_en;
                         else
                             wb_mem_wr_en <= '0';
+                            wb_mem_addr  <= rd_req_addr;
                         end if;
 
                         assert (F_GET_NEXT_REQ /= NONE) report "STB state enterred erroneously (F_GET_NEXT_REQ = NONE)." severity error;
