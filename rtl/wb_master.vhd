@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------------------------
 --                                      ~   nightjar-v   ~                                      --
 --------------------------------------------------------------------------------------------------
--- Filename:    wb_mem_ctrl.vhd
+-- Filename:    wb_master.vhd
 -- Author:      Will Arden
 -- Date:        3rd October 2026
 -- Brief:       Wishbone memory controller.
@@ -22,7 +22,7 @@ use ieee.numeric_std.all;
 
 use work.common_pkg.all;
 
-entity wb_mem_ctrl is
+entity wb_master is
     generic (
         G_ADDR_WIDTH        : positive := 32;
         G_DATA_WIDTH        : positive := 32;
@@ -75,7 +75,7 @@ entity wb_mem_ctrl is
     );
 end entity;
 
-architecture rtl of wb_mem_ctrl is
+architecture rtl of wb_master is
 
     -- FSM states
     type state_t is (IDLE, STB, ACK, RTY, FSM_ERROR);

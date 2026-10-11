@@ -6,7 +6,7 @@ use ieee.numeric_std.all;
 library vunit_lib;
 context vunit_lib.vunit_context;
 
-entity tb_wb_mem_ctrl is
+entity tb_wb_master is
     generic (
         runner_cfg   : string;
         G_ADDR_WIDTH : positive := 32;
@@ -24,7 +24,7 @@ entity tb_wb_mem_ctrl is
     );
 end;
 
-architecture tb of tb_wb_mem_ctrl is
+architecture tb of tb_wb_master is
 
     -- Clock period
     constant C_CLK_PERIOD : time := 10 ns;
@@ -82,7 +82,7 @@ begin
     -- Instantiate DUT --
     ---------------------
 
-    x_wb_mem_ctrl : entity work.wb_mem_ctrl
+    x_wb_master : entity work.wb_master
         generic map(
             G_ADDR_WIDTH => G_ADDR_WIDTH,
             G_DATA_WIDTH => G_DATA_WIDTH
@@ -180,7 +180,7 @@ begin
         test_runner_setup(runner, runner_cfg);
         while test_suite loop
             if run("test_0") then
-                info("Beginning wb_mem_ctrl test...");
+                info("Beginning wb_master test...");
 
                 -- Default signal assigments
                 rd_req_valid   <= '0';

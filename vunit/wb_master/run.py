@@ -22,11 +22,11 @@ lib = vu.add_library("lib") # Create a new library
 # Add VHDL sources and testbenches
 lib.add_source_file("../rtl/common_pkg.vhd")
 lib.add_source_file("../sim/wb_mem.vhd")
-lib.add_source_file("../rtl/wb_mem_ctrl.vhd")
+lib.add_source_file("../rtl/wb_master.vhd")
 
 # Declare the testbench
-lib.add_source_files("wb_mem_ctrl/*.vhd")
-tb = lib.test_bench("tb_wb_mem_ctrl")
+lib.add_source_files("wb_master/*.vhd")
+tb = lib.test_bench("tb_wb_master")
 
 # Set generics
 # tb.set_generic("G_CACHE_SETS", T_CACHE_SETS)

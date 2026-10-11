@@ -1,4 +1,4 @@
-SIM_LIST := cache wb_mem_ctrl
+SIM_LIST := cache wb_master
 
 .PHONY: all help clean sim-%
 
