@@ -10,14 +10,17 @@
 --              designed such that it can be switched out (relatively painlessly) for an
 --              alternative interface, such as AXI4-Lite.
 --              The G_PRIORITISE_READS generic is used to dictate which operation is prioritised,
---              when two are requested at once. For interfaces which can handle simultaneous
---              reading and writing, this only relates to address collisions.
+--              when two are requested at once. For interfaces that can handle simultaneous
+--              reading and writing, this would only affect read-during-write collisions (check
+--              implementation before assuming this behaviour).
 -- Remarks:     Only one operation can happen on the Wishbone bus at a time.
 --------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+
+use work.common_pkg.all;
 
 entity wb_mem_ctrl is
     generic (
@@ -47,11 +50,12 @@ entity wb_mem_ctrl is
         wr_req_byte_en : in std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
         wr_req_data    : in std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
-        -- Read response interface
+        -- Response interface
         rd_resp_valid : out std_logic;
         rd_resp_ready : in std_logic;
         rd_resp_data  : out std_logic_vector(G_DATA_WIDTH - 1 downto 0);
         rd_resp_err   : out std_logic;
+        wr_resp_err   : out std_logic;
 
         ------------------------------------------
         -- External memory interface (Wishbone) --
@@ -73,219 +77,181 @@ end entity;
 
 architecture rtl of wb_mem_ctrl is
 
-    -- Declare rd/wr request buffers
-    type req_buf_t is record
-        valid   : std_logic;
-        consume : std_logic; -- Combinational signal to trigger update
-        addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
-        byte_en : std_logic_vector(((G_DATA_WIDTH + 7) / 8) - 1 downto 0); -- Write only
-        data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);             -- Write only
-    end record;
-    signal rd_req_buf : req_buf_t;
-    signal wr_req_buf : req_buf_t;
-
     -- FSM states
-    type state_t is (IDLE, RD_STB, RD_ACK, RD_RTY_WAIT, WR_STB, WR_ACK, WR_RTY_WAIT, FSM_ERROR);
+    type state_t is (IDLE, STB, ACK, RTY, FSM_ERROR);
     signal state      : state_t;
     signal next_state : state_t;
 
+    -- Declare a backup buffer to hold a secondary request if a write and read are simultaneously requested
+    type backup_buf_t is record
+        consume : std_logic;
+        valid   : std_logic;
+        wr_en   : std_logic;
+        addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
+        data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+        byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
+    end record;
+    signal backup_buf : backup_buf_t;
+
+    -- Function to select the next request to act upon
+    type op_t is (NONE, RD, WR);
+    function F_GET_NEXT_REQ return op_t is
+    begin
+        if (G_PRIORITISE_READS) then
+            if (rd_req_valid = '1') then
+                return RD;
+            elsif (wr_req_valid = '1') then
+                return WR;
+            end if;
+        else
+            if (wr_req_valid = '1') then
+                return WR;
+            elsif (rd_req_valid = '1') then
+                return RD;
+            end if;
+        end if;
+        return NONE;
+    end function;
+
+    signal rty_timer : unsigned(log2ceil(G_RETRY_TIMEOUT_CYC) - 1 downto 0);
+
 begin
 
-    -----------------------
-    -- Request buffering --
-    -----------------------
+    --------------------
+    -- Input handling --
+    --------------------
 
-    -- Assert ready when the request buffer contents will be otherwise empty on the next rising edge
-    rd_req_ready <= (not rd_req_buf.valid) or rd_req_buf.consume;
-    wr_req_ready <= (not wr_req_buf.valid) or wr_req_buf.consume;
-
-    -- Process to update the request buffers
-    req_buf_proc : process (clk) is
+    backup_buf_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
 
-            -- Invalidate upon consumption (these statements can be overridden by an incoming request)
-            if (rd_req_buf.consume = '1') then
-                rd_req_buf.valid <= '0';
-            end if;
-            if (wr_req_buf.consume = '1') then
-                wr_req_buf.valid <= '0';
+            -- Clear the contents of the buffer when the consume signal is asserted
+            if (backup_buf.consume = '1') then
+                backup_buf.valid <= '0';
             end if;
 
-            -- Buffer read requests
-            if (rd_req_valid = '1' and rd_req_ready = '1') then
-                rd_req_buf.valid <= '1';
-                rd_req_buf.addr  <= rd_req_addr;
+            -- If there are two requests at once, copy the non-priority request into the backup buffer
+            if (wr_req_valid = '1' and rd_req_valid = '1') then
+                backup_buf.valid <= '1';
+                if (F_GET_NEXT_REQ = WR) then
+                    backup_buf.wr_en <= '0';
+                    backup_buf.addr  <= rd_req_addr;
+                elsif (F_GET_NEXT_REQ = RD) then
+                    backup_buf.wr_en   <= '1';
+                    backup_buf.addr    <= wr_req_addr;
+                    backup_buf.data    <= wr_req_data;
+                    backup_buf.byte_en <= wr_req_byte_en;
+                end if;
+                assert (F_GET_NEXT_REQ /= NONE) report "Failed to copy into the backup buffer; F_GET_NEXT_REQ returned NONE." severity error;
             end if;
 
-            -- Buffer write requests
-            if (wr_req_valid = '1' and wr_req_ready = '1') then
-                wr_req_buf.valid   <= '1';
-                wr_req_buf.addr    <= wr_req_addr;
-                wr_req_buf.byte_en <= wr_req_byte_en;
-                wr_req_buf.data    <= wr_req_data;
-            end if;
-
-            -- Initialise upon reset
+            -- Initialise on reset
             if (rst = '1') then
-                rd_req_buf.valid <= '0';
-                wr_req_buf.valid <= '0';
+                backup_buf.valid <= '0';
             end if;
         end if;
     end process;
 
-    --------------------------------
-    -- Finite State Machine (FSM) --
-    --------------------------------
+    -- Assert the ready signals when:
+    --      > there is nothing waiting in the backup buffer, and
+    --      > there is not a transaction currently in-progress on the Wishbone bus
+    wr_req_ready <=
+        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
+        '0';
+    rd_req_ready <=
+        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
+        '0';
 
-    -- Combinational process to decide the next state
-    next_state_proc : process (rst, state, rd_req_buf, wr_req_buf, rd_req_valid, rd_req_ready, wr_req_valid, wr_req_ready, wb_mem_ack, wb_mem_err, wb_mem_rty) is
+    -- Asynchronous process to determine the next state
+    next_state_proc : process (state, wr_req_valid, wr_req_ready, rd_req_valid, rd_req_ready, wb_mem_ack, wb_mem_err, wb_mem_rty, rty_timer) is
     begin
+        next_state <= state;
         case (state) is
 
+                -- When there is a request handshake, initiate a Wishbone memory transaction
             when IDLE =>
-
-                -- Respond to a read or write request
-                if (G_PRIORITISE_READS) then
-                    if (rd_req_buf.valid = '1' or (rd_req_valid = '1' and rd_req_ready = '1')) then
-                        next_state <= RD_STB;
-                    elsif (wr_req_buf.valid = '1' or (wr_req_valid = '1' and wr_req_ready = '1')) then
-                        next_state <= WR_STB;
-                    end if;
-                else
-                    if (wr_req_buf.valid = '1' or (wr_req_valid = '1' and wr_req_ready = '1')) then
-                        next_state <= WR_STB;
-                    elsif (rd_req_buf.valid = '1' or (rd_req_valid = '1' and rd_req_ready = '1')) then
-                        next_state <= RD_STB;
-                    end if;
+                if ((wr_req_valid = '1' and wr_req_ready = '1') or (rd_req_valid = '1' and rd_req_ready = '1')) then
+                    next_state <= STB;
                 end if;
 
-            when RD_STB =>
-                next_state <= RD_ACK;
+                -- STB is asserted in this cycle
+            when STB =>
+                next_state <= ACK;
 
-            when RD_ACK =>
+                -- Wait for an ACK/RTY/ERR reponse before returning to IDLE, or going straight into the next transfer if necessary
+            when ACK =>
                 if (wb_mem_ack = '1' or wb_mem_err = '1') then
-
-                    -- Respond to a write or read request, or simply return to IDLE
-                    if (G_PRIORITISE_READS) then
-                        if (rd_req_buf.valid = '1' or (rd_req_valid = '1' and rd_req_ready = '1')) then
-                            next_state <= RD_STB;
-                        elsif (wr_req_buf.valid = '1' or (wr_req_valid = '1' and wr_req_ready = '1')) then
-                            next_state <= WR_STB;
-                        else
-                            next_state <= IDLE;
-                        end if;
+                    if ((wr_req_valid = '1' and wr_req_ready = '1') or (rd_req_valid = '1' and rd_req_ready = '1')) then
+                        next_state <= STB;
                     else
-                        if (wr_req_buf.valid = '1' or (wr_req_valid = '1' and wr_req_ready = '1')) then
-                            next_state <= WR_STB;
-                        elsif (rd_req_buf.valid = '1' or (rd_req_valid = '1' and rd_req_ready = '1')) then
-                            next_state <= RD_STB;
-                        else
-                            next_state <= IDLE;
-                        end if;
+                        next_state <= IDLE;
                     end if;
-
-                    -- If a retry is needed, wait for a while
                 elsif (wb_mem_rty = '1') then
-                    next_state <= RD_RTY_WAIT;
+                    next_state <= RTY;
                 end if;
 
-            when RD_RTY_WAIT => -- TODO
-
-            when WR_STB =>
-                next_state <= WR_ACK;
-
-            when WR_ACK =>
-                if (wb_mem_ack = '1' or wb_mem_err = '1') then
-
-                    -- Respond to a write or read request, or simply return to IDLE
-                    if (G_PRIORITISE_READS) then
-                        if (rd_req_buf.valid = '1' or (rd_req_valid = '1' and rd_req_ready = '1')) then
-                            next_state <= RD_STB;
-                        elsif (wr_req_buf.valid = '1' or (wr_req_valid = '1' and wr_req_ready = '1')) then
-                            next_state <= WR_STB;
-                        else
-                            next_state <= IDLE;
-                        end if;
-                    else
-                        if (wr_req_buf.valid = '1' or (wr_req_valid = '1' and wr_req_ready = '1')) then
-                            next_state <= WR_STB;
-                        elsif (rd_req_buf.valid = '1' or (rd_req_valid = '1' and rd_req_ready = '1')) then
-                            next_state <= RD_STB;
-                        else
-                            next_state <= IDLE;
-                        end if;
-                    end if;
-
-                    -- If a retry is needed, wait for a while
-                elsif (wb_mem_rty = '1') then
-                    next_state <= WR_RTY_WAIT;
+                -- Stay in this state until the retry timer expires
+            when RTY =>
+                if (rty_timer = 0) then
+                    next_state <= STB;
                 end if;
 
-            when WR_RTY_WAIT => -- TODO
-
-            when FSM_ERROR =>
-                next_state <= IDLE;
-
-            when others =>
-                next_state <= FSM_ERROR;
+            when others => next_state <= FSM_ERROR;
         end case;
     end process;
 
-    -- Process to advance the state
-    adv_state_proc : process (clk) is
-    begin
-        if (rising_edge(clk)) then
-            state <= next_state;
-            if (rst = '1') then
-                state <= IDLE;
-            end if;
-        end if;
-    end process;
-
-    -- Process to drive signals in response to the state machine
     ctrl_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-            rd_req_buf.consume <= '0';
-            wr_req_buf.consume <= '0';
 
-            -- Consume the read/write requests
-            if (next_state = RD_STB) then
-                rd_req_buf.consume <= '1';
-                wb_mem_addr        <= rd_req_buf.addr;
-            end if;
-            if (next_state = WR_STB) then
-                wr_req_buf.consume <= '1';
-                wb_mem_addr        <= wr_req_buf.addr; -- FIXME: this stuff is a cycle too late -- or is it
-                wb_mem_byte_en     <= wr_req_buf.byte_en;
-                wb_mem_wr_data     <= wr_req_buf.data;
+            -- Update the state
+            state <= next_state;
+
+            -- Clear signals upon returning to IDLE
+            if (next_state <= IDLE) then
+                wb_mem_cyc     <= '0';
+                wb_mem_stb     <= '0';
             end if;
 
-            -- When an acknowledgement or an error is received, de-assert CYC_O and STB_O
-            if (wb_mem_ack = '1' or wb_mem_err = '1') then
+            -- Update the Wishbone outputs upon entering the STB state
+            if (next_state = STB) then
+                wb_mem_cyc <= '1';
+                wb_mem_stb <= '1';
+
+                if (state /= RTY) then -- If this is a retry, do not update the other Wishbone outputs
+
+                    -- Prioritise requests held in the backup buffer
+                    if (backup_buf.valid = '1') then
+                        wb_mem_wr_en   <= backup_buf.wr_en;
+                        wb_mem_addr    <= backup_buf.addr;
+                        wb_mem_wr_data <= backup_buf.data;
+                        wb_mem_byte_en <= backup_buf.byte_en;
+
+                        -- Otherwise, the STB state must've been triggered by a new request
+                    else
+                        wb_mem_addr    <= wr_req_addr;
+                        wb_mem_wr_data <= wr_req_data;
+                        wb_mem_byte_en <= wr_req_byte_en;
+
+                        if (F_GET_NEXT_REQ = WR) then
+                            wb_mem_wr_en <= '1';
+                        else
+                            wb_mem_wr_en <= '0';
+                        end if;
+
+                        assert (F_GET_NEXT_REQ /= NONE) report "STB state enterred erroneously (F_GET_NEXT_REQ = NONE)." severity error;
+                        assert ((wr_req_valid = '1' and wr_req_ready = '1') or (rd_req_valid = '1' and rd_req_ready = '1')) report "STB state enterred erroneously (no new/in-progress requests)." severity error;
+                    end if;
+                end if;
+            end if;
+
+            -- Initialise on reset
+            if (rst = '1') then
+                state      <= IDLE;
                 wb_mem_cyc <= '0';
                 wb_mem_stb <= '0';
             end if;
-
-            -- However, if returning to a _STB state, keep CYC_O and STB_O asserted
-            if (next_state = RD_STB or next_state = WR_STB) then
-                wb_mem_cyc <= '1';
-                wb_mem_stb <= '1';
-            end if;
-
-            -- Initialise upon reset
-            if (rst = '1') then
-                wb_mem_cyc         <= '0';
-                wb_mem_stb         <= '0';
-                rd_req_buf.consume <= '0';
-                wr_req_buf.consume <= '0';
-            end if;
         end if;
     end process;
-
-    -- TODO:
-    -- rd_req_buf.consume <= '0';
-    -- wr_req_buf.consume <= '0';
 
 end architecture;

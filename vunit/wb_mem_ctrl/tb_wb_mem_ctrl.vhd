@@ -44,6 +44,7 @@ architecture tb of tb_wb_mem_ctrl is
     signal rd_resp_ready  : std_logic;
     signal rd_resp_data   : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal rd_resp_err    : std_logic;
+    signal wr_resp_err    : std_logic;
     signal wb_mem_stb     : std_logic;
     signal wb_mem_ack     : std_logic;
     signal wb_mem_cyc     : std_logic;
@@ -102,6 +103,7 @@ begin
             rd_resp_ready  => rd_resp_ready,
             rd_resp_data   => rd_resp_data,
             rd_resp_err    => rd_resp_err,
+            wr_resp_err    => wr_resp_err,
             wb_mem_stb     => wb_mem_stb,
             wb_mem_ack     => wb_mem_ack,
             wb_mem_cyc     => wb_mem_cyc,
@@ -193,7 +195,7 @@ begin
                 wait until rising_edge(clk);
 
                 -- Request several writes
-                for i in 0 to 3 loop
+                for i in 0 to 9 loop
                     wr_req(
                     addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
                     data    => std_logic_vector(to_unsigned((i * 4) + 1, G_DATA_WIDTH)),
