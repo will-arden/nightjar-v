@@ -11,7 +11,16 @@ entity tb_wb_mem_ctrl is
         runner_cfg   : string;
         G_ADDR_WIDTH : positive := 32;
         G_DATA_WIDTH : positive := 32;
-        G_MEM_DEPTH  : positive := 1024
+        G_MEM_DEPTH  : positive := 1024;
+
+        -- Memory generics
+        G_BASE_LATENCY      : positive               := 3;
+        G_PENALTY_LATENCY   : positive               := 50;
+        G_PENALTY_PROB_X100 : natural range 0 to 100 := 20;
+        G_ERR_PROB_X100     : natural range 0 to 100 := 10;
+        G_RTY_PROB_X100     : natural range 0 to 100 := 10;
+        G_RANDOM_SEED_A     : natural                := 1234;
+        G_RANDOM_SEED_B     : natural                := 5678
     );
 end;
 
@@ -20,7 +29,7 @@ architecture tb of tb_wb_mem_ctrl is
     -- Clock period
     constant C_CLK_PERIOD : time := 10 ns;
 
-    -- Ports
+    -- DUT ports
     signal clk            : std_logic := '0';
     signal rst            : std_logic;
     signal rd_req_valid   : std_logic;
@@ -45,6 +54,18 @@ architecture tb of tb_wb_mem_ctrl is
     signal wb_mem_addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
     signal wb_mem_rd_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal wb_mem_wr_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+
+    -- Memory ports
+    -- signal wb_cyc_i : std_logic;
+    -- signal wb_stb_i : std_logic;
+    -- signal wb_we_i  : std_logic;
+    -- signal wb_adr_i : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
+    -- signal wb_sel_i : std_logic_vector(((G_DATA_WIDTH + 7) / 8) - 1 downto 0);
+    -- signal wb_dat_i : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    -- signal wb_ack_o : std_logic;
+    -- signal wb_err_o : std_logic;
+    -- signal wb_rty_o : std_logic;
+    -- signal wb_dat_o : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
     -- Reference memory
     type mem_t is array (0 to G_MEM_DEPTH - 1) of std_logic_vector(G_DATA_WIDTH - 1 downto 0);
@@ -93,6 +114,39 @@ begin
             wb_mem_wr_data => wb_mem_wr_data
         );
 
+    ----------------------------------
+    -- Instantiate memory component --
+    ----------------------------------
+
+    x_wb_mem : entity work.wb_mem
+        generic map(
+            G_MEM_DEPTH         => G_MEM_DEPTH,
+            G_ADDR_WIDTH        => G_ADDR_WIDTH,
+            G_DATA_WIDTH        => G_DATA_WIDTH,
+            G_BASE_LATENCY      => G_BASE_LATENCY,
+            G_PENALTY_LATENCY   => G_PENALTY_LATENCY,
+            G_PENALTY_PROB_X100 => G_PENALTY_PROB_X100,
+            G_ERR_PROB_X100     => G_ERR_PROB_X100,
+            G_RTY_PROB_X100     => G_RTY_PROB_X100,
+            G_RANDOM_SEED_A     => G_RANDOM_SEED_A,
+            G_RANDOM_SEED_B     => G_RANDOM_SEED_B
+        )
+        port map
+        (
+            clk      => clk,
+            rst      => rst,
+            wb_cyc_i => wb_mem_cyc,
+            wb_stb_i => wb_mem_stb,
+            wb_we_i  => wb_mem_wr_en,
+            wb_adr_i => wb_mem_addr,
+            wb_sel_i => wb_mem_byte_en,
+            wb_dat_i => wb_mem_wr_data,
+            wb_ack_o => wb_mem_ack,
+            wb_err_o => wb_mem_err,
+            wb_rty_o => wb_mem_rty,
+            wb_dat_o => wb_mem_rd_data
+        );
+
     -----------------
     -- VUnit entry --
     -----------------
@@ -139,7 +193,7 @@ begin
                 wait until rising_edge(clk);
 
                 -- Request several writes
-                for i in 0 to 0 loop
+                for i in 0 to 3 loop
                     wr_req(
                     addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
                     data    => std_logic_vector(to_unsigned((i * 4) + 1, G_DATA_WIDTH)),

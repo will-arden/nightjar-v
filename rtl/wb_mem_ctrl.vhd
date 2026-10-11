@@ -139,7 +139,7 @@ begin
     --------------------------------
 
     -- Combinational process to decide the next state
-    next_state_proc : process (rst, state, rd_req_buf, wr_req_buf, rd_req_valid, rd_req_ready, wr_req_valid, wr_req_ready) is
+    next_state_proc : process (rst, state, rd_req_buf, wr_req_buf, rd_req_valid, rd_req_ready, wr_req_valid, wr_req_ready, wb_mem_ack, wb_mem_err, wb_mem_rty) is
     begin
         case (state) is
 
@@ -253,21 +253,25 @@ begin
             -- Consume the read/write requests
             if (next_state = RD_STB) then
                 rd_req_buf.consume <= '1';
+                wb_mem_addr        <= rd_req_buf.addr;
             end if;
             if (next_state = WR_STB) then
                 wr_req_buf.consume <= '1';
-            end if;
-
-            -- Assert CYC_O and STB_O during the RD_STB and WR_STB states
-            if (next_state = RD_STB or next_state = WR_STB) then
-                wb_mem_cyc <= '1';
-                wb_mem_stb <= '1';
+                wb_mem_addr        <= wr_req_buf.addr; -- FIXME: this stuff is a cycle too late -- or is it
+                wb_mem_byte_en     <= wr_req_buf.byte_en;
+                wb_mem_wr_data     <= wr_req_buf.data;
             end if;
 
             -- When an acknowledgement or an error is received, de-assert CYC_O and STB_O
             if (wb_mem_ack = '1' or wb_mem_err = '1') then
                 wb_mem_cyc <= '0';
                 wb_mem_stb <= '0';
+            end if;
+
+            -- However, if returning to a _STB state, keep CYC_O and STB_O asserted
+            if (next_state = RD_STB or next_state = WR_STB) then
+                wb_mem_cyc <= '1';
+                wb_mem_stb <= '1';
             end if;
 
             -- Initialise upon reset
