@@ -223,7 +223,7 @@ begin
     sec_buf_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-            if (req_fifo.rd_valid = '1' and req_fifo.rd_ready = '1') then
+            if (req_fifo.rd_valid = '1' and req_fifo.rd_ready = '1') then -- FIFO read handshake
                 sec_buf.wr_en   <= sec_req.wr_en;
                 sec_buf.valid   <= sec_req.valid;
                 sec_buf.addr    <= sec_req.addr;
@@ -241,30 +241,31 @@ begin
     --------------------------------
 
     req_fifo.rd_ready <=
-    '0' when (sec_buf.valid = '1') else                                         -- Not ready when there is a secondary request waiting
-    '0' when (next_state = STB and (wb_mem_ack = '0' or wb_mem_err = '0')) else -- Not ready while the Wishbone master is waiting for an ACK
-    '0' when (next_state = RTY) else                                            -- Not ready while the bus is waiting to retry
-    '0' when (next_state = FSM_ERROR) else                                      -- The core can completely lock up in this case
+    '0' when (sec_buf.valid = '1') else    -- Not ready when there is a secondary request waiting
+    '0' when (next_state = ACK) else       -- Not ready while the Wishbone master is waiting for an ACK
+    '0' when (next_state = RTY) else       -- Not ready while the bus is waiting to retry
+    '0' when (next_state = FSM_ERROR) else -- The core can completely lock up in this case
     '1';
 
     -- Process to select the next state
-    next_state_proc : process (state, pri_req, sec_req) is
+    next_state_proc : process (state, pri_req, sec_req, wb_mem_ack, wb_mem_err, wb_mem_rty) is
     begin
         case (state) is
 
             when IDLE =>
-                if (pri_req.valid = '1') then
+                if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
                     next_state <= STB;
                 end if;
-                assert (not (pri_req.valid = '0' and sec_req.valid = '1')) report "Returned to IDLE state without acting on the secondary request." severity error;
 
             when STB =>
                 next_state <= ACK;
 
             when ACK =>
                 if (wb_mem_ack = '1' or wb_mem_err = '1') then
-                    if (pri_req.valid = '1' or sec_req.valid = '1') then
+                    if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
                         next_state <= STB;
+                    else
+                        next_state <= IDLE;
                     end if;
                 elsif (wb_mem_rty = '1') then
                     next_state <= RTY;
@@ -276,8 +277,8 @@ begin
         end case;
     end process;
 
-    -- FSM process
-    fsm_proc : process (clk) is
+    -- Synchronous control process
+    ctrl_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
 
@@ -285,12 +286,29 @@ begin
 
             -- Hold STB high until there is a response on the Wishbone bus
             if (next_state = STB) then
-                wb_mem_cyc     <= '1';
-                wb_mem_stb     <= '1';
-                wb_mem_wr_en   <= pri_req.wr_en;
-                wb_mem_addr    <= pri_req.addr; -- TODO: for now just focus on primary requests
-                wb_mem_byte_en <= pri_req.byte_en;
-                wb_mem_wr_data <= pri_req.data;
+                wb_mem_cyc <= '1';
+                wb_mem_stb <= '1';
+
+                -- Act on the primary request, if it is present, and if the secondary buffer is empty
+                if (sec_buf.valid = '0' and pri_req.valid = '1') then
+                    wb_mem_wr_en   <= pri_req.wr_en;
+                    wb_mem_addr    <= pri_req.addr;
+                    wb_mem_byte_en <= pri_req.byte_en;
+                    wb_mem_wr_data <= pri_req.data;
+
+                    -- Secondary requests otherwise take priority
+                else
+                    wb_mem_wr_en   <= sec_req.wr_en;
+                    wb_mem_addr    <= sec_req.addr;
+                    wb_mem_byte_en <= sec_req.byte_en;
+                    wb_mem_wr_data <= sec_req.data;
+                end if;
+            end if;
+
+            -- De-assert STB
+            if (next_state = IDLE or next_state = FSM_ERROR) then
+                wb_mem_cyc <= '0';
+                wb_mem_stb <= '0';
             end if;
 
         end if;
