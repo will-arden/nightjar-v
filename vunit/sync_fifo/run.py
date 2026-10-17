@@ -18,7 +18,6 @@ lib = vu.add_library("lib") # Create a new library
 
 # Add RTL files
 lib.add_source_file("../rtl/common_pkg.vhd")
-lib.add_source_file("../rtl/generic_ram.vhd")
 lib.add_source_file("../rtl/sync_fifo.vhd")
 
 # Declare the testbench

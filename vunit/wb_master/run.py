@@ -22,6 +22,7 @@ lib = vu.add_library("lib") # Create a new library
 # Add VHDL sources and testbenches
 lib.add_source_file("../rtl/common_pkg.vhd")
 lib.add_source_file("../sim/wb_mem.vhd")
+lib.add_source_file("../rtl/sync_fifo.vhd")
 lib.add_source_file("../rtl/wb_master.vhd")
 
 # Declare the testbench

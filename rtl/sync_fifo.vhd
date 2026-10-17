@@ -5,8 +5,8 @@
 -- Author:      Will Arden
 -- Date:        17th October 2026
 -- Brief:       Synchronous FIFO element.
--- Description: This is a generic, synchronous, RAM-based FIFO.
--- Remarks:     To control what kind of RAM is used, modify generic_ram.
+-- Description: This is a synchronous, RTL-based, First-Word-Fall-Through (FWFT) FIFO.
+-- Remarks:     The FIFO is implemented in RTL, so BRAM inference may be unlikely.
 --------------------------------------------------------------------------------------------------
 --------------------------------------------------------------------------------------------------
 
@@ -68,36 +68,6 @@ architecture rtl of sync_fifo is
   signal wr_handshake : std_logic;
 
 begin
-
-  --------------------------
-  -- Instantiate FIFO RAM --
-  --------------------------
-
-  x_generic_ram : entity work.generic_ram
-    generic map(
-      G_WIDTH    => G_WIDTH,
-      G_DEPTH    => G_DEPTH
-    )
-    port map
-    (
-      a_clk     => clk,
-      a_port_en => '1',
-      a_addr    => std_logic_vector(wr_ptr),
-      a_rd_data => open,
-      a_rd_en   => '1',
-      a_wr_data => wr_data,
-      a_wr_en   => wr_handshake,
-      a_wr_byte_en => (others => '1'),
-
-      b_clk     => clk,
-      b_port_en => '1',
-      b_addr    => std_logic_vector(rd_ptr),
-      b_rd_data => rd_data,
-      b_rd_en   => '1',
-      b_wr_data => (others => '0'),
-      b_wr_en   => '0',
-      b_wr_byte_en => (others => '0')
-    );
 
   -----------------------
   -- Read output logic --
