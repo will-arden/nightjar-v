@@ -27,6 +27,7 @@ entity wb_master is
         G_ADDR_WIDTH        : positive := 32;
         G_DATA_WIDTH        : positive := 32;
         G_REQ_FIFO_SIZE     : natural  := 8;
+        G_RESP_FIFO_SIZE    : natural  := 8;
         G_PRIORITISE_READS  : boolean  := false;
         G_RETRY_TIMEOUT_CYC : positive := 10
     );
@@ -52,11 +53,11 @@ entity wb_master is
         wr_req_data    : in std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
         -- Response interface
-        rd_resp_valid : out std_logic;
-        rd_resp_ready : in std_logic;
-        rd_resp_data  : out std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-        rd_resp_err   : out std_logic;
-        wr_resp_err   : out std_logic;
+        resp_valid   : out std_logic;
+        resp_ready   : in std_logic;
+        resp_rd      : out std_logic; -- '0': Write response; '1': Read response + data
+        resp_rd_data : out std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+        resp_err     : out std_logic;
 
         ------------------------------------------
         -- External memory interface (Wishbone) --
@@ -137,6 +138,12 @@ architecture rtl of wb_master is
     end record;
     signal pri_req : req_t;
     signal sec_req : req_t;
+
+    -- Declare internal response signals
+    signal resp_valid_out   : std_logic;
+    signal resp_rd_out      : std_logic;
+    signal resp_rd_data_out : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal resp_err_out     : std_logic;
 
     -- Misc. internal signals
     signal req_sel       : std_logic;
@@ -352,14 +359,29 @@ begin
                 end if;
             end if;
 
+            -- Register the request FIFO empty flag, to facilitate the performance optimisation
+            req_empty_reg <= req_fifo.empty;
+
             -- De-assert STB
             if (next_state = IDLE or next_state = FSM_ERROR) then
                 wb_mem_cyc <= '0';
                 wb_mem_stb <= '0';
             end if;
 
-            -- Register the request FIFO empty flag, to facilitate the performance optimisation
-            req_empty_reg <= req_fifo.empty;
+            -- Generate a response
+            if (state = ACK) then
+                if (wb_mem_ack = '1') then
+                    resp_valid_out   <= '1';
+                    resp_rd_out      <= not wb_mem_wr_en;
+                    resp_rd_data_out <= wb_mem_rd_data;
+                    resp_err_out     <= '0';
+                elsif (wb_mem_err = '1') then
+                    resp_valid_out   <= '1';
+                    resp_rd_out      <= not wb_mem_wr_en;
+                    resp_rd_data_out <= wb_mem_rd_data;
+                    resp_err_out     <= '1';
+                end if;
+            end if;
 
         end if;
     end process;

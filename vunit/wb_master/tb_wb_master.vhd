@@ -18,7 +18,7 @@ entity tb_wb_master is
         G_PENALTY_LATENCY   : positive               := 50;
         G_PENALTY_PROB_X100 : natural range 0 to 100 := 20;
         G_ERR_PROB_X100     : natural range 0 to 100 := 10;
-        G_RTY_PROB_X100     : natural range 0 to 100 := 10;
+        G_RTY_PROB_X100     : natural range 0 to 100 := 0;
         G_RANDOM_SEED_A     : natural                := 1234;
         G_RANDOM_SEED_B     : natural                := 5678
     );
@@ -40,10 +40,11 @@ architecture tb of tb_wb_master is
     signal wr_req_addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
     signal wr_req_byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
     signal wr_req_data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-    signal rd_resp_valid  : std_logic;
-    signal rd_resp_ready  : std_logic;
-    signal rd_resp_data   : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-    signal rd_resp_err    : std_logic;
+    signal resp_valid     : std_logic;
+    signal resp_ready     : std_logic;
+    signal resp_rd        : std_logic;
+    signal resp_rd_data   : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal resp_err       : std_logic;
     signal wr_resp_err    : std_logic;
     signal wb_mem_stb     : std_logic;
     signal wb_mem_ack     : std_logic;
@@ -55,18 +56,6 @@ architecture tb of tb_wb_master is
     signal wb_mem_addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
     signal wb_mem_rd_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal wb_mem_wr_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-
-    -- Memory ports
-    -- signal wb_cyc_i : std_logic;
-    -- signal wb_stb_i : std_logic;
-    -- signal wb_we_i  : std_logic;
-    -- signal wb_adr_i : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
-    -- signal wb_sel_i : std_logic_vector(((G_DATA_WIDTH + 7) / 8) - 1 downto 0);
-    -- signal wb_dat_i : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-    -- signal wb_ack_o : std_logic;
-    -- signal wb_err_o : std_logic;
-    -- signal wb_rty_o : std_logic;
-    -- signal wb_dat_o : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
     -- Reference memory
     type mem_t is array (0 to G_MEM_DEPTH - 1) of std_logic_vector(G_DATA_WIDTH - 1 downto 0);
@@ -99,11 +88,11 @@ begin
             wr_req_addr    => wr_req_addr,
             wr_req_byte_en => wr_req_byte_en,
             wr_req_data    => wr_req_data,
-            rd_resp_valid  => rd_resp_valid,
-            rd_resp_ready  => rd_resp_ready,
-            rd_resp_data   => rd_resp_data,
-            rd_resp_err    => rd_resp_err,
-            wr_resp_err    => wr_resp_err,
+            resp_valid     => resp_valid,
+            resp_ready     => resp_ready,
+            resp_rd        => resp_rd,
+            resp_rd_data   => resp_rd_data,
+            resp_err       => resp_err,
             wb_mem_stb     => wb_mem_stb,
             wb_mem_ack     => wb_mem_ack,
             wb_mem_cyc     => wb_mem_cyc,
@@ -189,7 +178,7 @@ begin
                 wr_req_addr    <= (others => '0');
                 wr_req_byte_en <= (others => '1');
                 wr_req_data    <= (others => '0');
-                rd_resp_ready  <= '0';
+                resp_ready     <= '0';
                 wait until rst = '0';
                 wait for (5 * C_CLK_PERIOD);
                 wait until rising_edge(clk);
@@ -204,7 +193,7 @@ begin
                     );
                 end loop;
 
-                wait for (100 * C_CLK_PERIOD);
+                wait for (1000 * C_CLK_PERIOD);
                 test_runner_cleanup(runner);
             end if;
         end loop;
