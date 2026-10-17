@@ -90,7 +90,7 @@ architecture behav of wb_mem is
 
     -- Declare memory
     type ram_t is array (0 to F_GET_MEM_DEPTH - 1) of std_logic_vector(31 downto 0);
-    signal ram : ram_t;
+    signal ram : ram_t := (others => (others => '0'));
 
     -- Procedure to return the initialised memory
     procedure F_GET_INIT_MEMORY(ram_out : out ram_t) is
@@ -102,8 +102,9 @@ architecture behav of wb_mem is
         variable idx                        : natural := 0;
     begin
 
-        -- If no path is provided, skip this procedure
+        -- If no path is provided, simply zero-initialise
         if (G_MEM_INIT_PATH = "") then
+            ram_out := (others => (others => '0'));
             return;
         end if;
 
@@ -132,15 +133,6 @@ architecture behav of wb_mem is
     signal rand_b : real;
 
 begin
-
-    -- Process to initialise the memory
-    init_proc : process is
-        variable v_ram : ram_t;
-    begin
-        F_GET_INIT_MEMORY(ram_out => v_ram);
-        ram <= v_ram;
-        wait;
-    end process;
 
     -- Randomness engine
     random_proc : process (clk) is
@@ -232,13 +224,18 @@ begin
     end process;
 
     -- Process to control reading and writing from/to the memory
-    mem_proc : process (clk) is
+    mem_proc : process (clk, rst) is
+        variable v_ram  : ram_t;
         variable v_err  : boolean;
         variable v_rty  : boolean;
         variable v_ack  : boolean;
         variable v_addr : natural range 0 to (F_GET_MEM_DEPTH - 1);
     begin
-        if (rising_edge(clk)) then
+        if (rst = '1') then
+            F_GET_INIT_MEMORY(ram_out => v_ram);
+            ram <= v_ram;
+
+        elsif (rising_edge(clk)) then
             wb_ack_o <= '0';
             wb_err_o <= '0';
             wb_rty_o <= '0';
@@ -256,6 +253,7 @@ begin
                     v_addr := to_integer(unsigned(wb_adr_i(wb_adr_i'high downto 2))); -- LSBs are ignored to ensure byte-aligned accesses
 
                     if (wb_we_i = '1') then
+                        report "Writing " & to_hstring(wb_dat_i) & " to address index " & integer'image(v_addr);
                         ram(v_addr) <= wb_dat_i; -- Write
                     else
                         wb_dat_o <= ram(v_addr); -- Read
