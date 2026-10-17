@@ -139,7 +139,8 @@ architecture rtl of wb_master is
     signal sec_req : req_t;
 
     -- Misc. internal signals
-    signal req_sel : std_logic;
+    signal req_sel       : std_logic;
+    signal req_empty_reg : std_logic;
 
 begin
 
@@ -240,7 +241,9 @@ begin
     -- Finite State Machine (FSM) --
     --------------------------------
 
+    -- Collect the next operation(s) from the request FIFO
     req_fifo.rd_ready <=
+    '1' when (req_empty_reg = '1') else    -- Skip the first transaction after the FIFO is empty, when it appears
     '0' when (sec_buf.valid = '1') else    -- Not ready when there is a secondary request waiting
     '0' when (next_state = ACK) else       -- Not ready while the Wishbone master is waiting for an ACK
     '0' when (next_state = RTY) else       -- Not ready while the bus is waiting to retry
@@ -248,13 +251,26 @@ begin
     '1';
 
     -- Process to select the next state
-    next_state_proc : process (state, pri_req, sec_req, wb_mem_ack, wb_mem_err, wb_mem_rty) is
+    next_state_proc : process (state, req_fifo, pri_req, sec_req, sec_buf, wb_mem_ack, wb_mem_err, wb_mem_rty, wr_req_valid, rd_req_valid) is
     begin
         case (state) is
 
             when IDLE =>
+
+                -- Begin a bus transaction if there is a valid request from the FIFO
                 if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
                     next_state <= STB;
+
+                    -- Performance optimisation (for the first transaction, you can skip the FIFO)
+                elsif (req_fifo.empty = '1' and (wr_req_valid = '1' or rd_req_valid = '1')) then
+                    next_state <= STB;
+                    assert (req_fifo.rd_valid = '0') report "FIFO is reporting it is empty, but hasn't de-asserted its rd_valid signal." severity error;
+
+                    -- Similarly, begin a bus transaction if there is a valid request waiting in the secondary buffer
+                    -- Technically, this should not happen from the IDLE state
+                elsif (sec_buf.valid = '1') then
+                    next_state <= STB;
+                    assert (false) report "Secondary buffer was not properly emptied before returning to the IDLE state." severity error;
                 end if;
 
             when STB =>
@@ -282,26 +298,57 @@ begin
     begin
         if (rising_edge(clk)) then
 
-            state <= next_state; -- Advance the state
+            -- Advance the state
+            state <= next_state;
 
             -- Hold STB high until there is a response on the Wishbone bus
             if (next_state = STB) then
                 wb_mem_cyc <= '1';
                 wb_mem_stb <= '1';
 
-                -- Act on the primary request, if it is present, and if the secondary buffer is empty
-                if (sec_buf.valid = '0' and pri_req.valid = '1') then
-                    wb_mem_wr_en   <= pri_req.wr_en;
-                    wb_mem_addr    <= pri_req.addr;
-                    wb_mem_byte_en <= pri_req.byte_en;
-                    wb_mem_wr_data <= pri_req.data;
+                -- In the normal case, data is received from the FIFO/secondary buffer
+                if (req_fifo.rd_valid = '1' or sec_buf.valid = '1') then
 
-                    -- Secondary requests otherwise take priority
+                    -- Act on the primary request, if it is present, and if the secondary buffer is empty
+                    if (sec_buf.valid = '0' and pri_req.valid = '1') then
+                        wb_mem_wr_en   <= pri_req.wr_en;
+                        wb_mem_addr    <= pri_req.addr;
+                        wb_mem_byte_en <= pri_req.byte_en;
+                        wb_mem_wr_data <= pri_req.data;
+
+                        -- Secondary requests otherwise take priority
+                    else
+                        wb_mem_wr_en   <= sec_req.wr_en;
+                        wb_mem_addr    <= sec_req.addr;
+                        wb_mem_byte_en <= sec_req.byte_en;
+                        wb_mem_wr_data <= sec_req.data;
+                    end if;
+
+                    -- Performance optimisation (FIFO can be skipped for the first transaction)
+                elsif (req_fifo.empty = '1') then
+                    if (not G_PRIORITISE_READS) then
+                        if (wr_req_valid = '1') then
+                            wb_mem_wr_en   <= '1';
+                            wb_mem_addr    <= wr_req_addr;
+                            wb_mem_byte_en <= wr_req_byte_en;
+                            wb_mem_wr_data <= wr_req_data;
+                        elsif (rd_req_valid = '1') then
+                            wb_mem_wr_en <= '0';
+                            wb_mem_addr  <= rd_req_addr;
+                        end if;
+                    else
+                        if (rd_req_valid = '1') then
+                            wb_mem_wr_en <= '0';
+                            wb_mem_addr  <= rd_req_addr;
+                        elsif (wr_req_valid = '1') then
+                            wb_mem_wr_en   <= '1';
+                            wb_mem_addr    <= wr_req_addr;
+                            wb_mem_byte_en <= wr_req_byte_en;
+                            wb_mem_wr_data <= wr_req_data;
+                        end if;
+                    end if;
                 else
-                    wb_mem_wr_en   <= sec_req.wr_en;
-                    wb_mem_addr    <= sec_req.addr;
-                    wb_mem_byte_en <= sec_req.byte_en;
-                    wb_mem_wr_data <= sec_req.data;
+                    assert (false) report "STB state entered erroneously; no requests can be submitted for a bus transaction." severity error;
                 end if;
             end if;
 
@@ -310,6 +357,9 @@ begin
                 wb_mem_cyc <= '0';
                 wb_mem_stb <= '0';
             end if;
+
+            -- Register the request FIFO empty flag, to facilitate the performance optimisation
+            req_empty_reg <= req_fifo.empty;
 
         end if;
     end process;
