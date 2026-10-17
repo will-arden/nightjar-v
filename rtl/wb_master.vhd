@@ -131,7 +131,7 @@ begin
             end if;
 
             -- If there are two requests at once, copy the non-priority request into the backup buffer
-            if (wr_req_valid = '1' and rd_req_valid = '1') then
+            if ((wr_req_valid = '1' and wr_req_ready = '1') and (rd_req_valid = '1' and rd_req_ready = '1')) then
                 backup_buf.valid <= '1';
                 if (F_GET_NEXT_REQ = WR) then
                     backup_buf.wr_en <= '0';
@@ -156,10 +156,10 @@ begin
     --      > there is nothing waiting in the backup buffer, and
     --      > there is not a transaction currently in-progress on the Wishbone bus
     wr_req_ready <=
-        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
+        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and state /= RTY and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
         '0';
     rd_req_ready <=
-        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
+        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and state /= RTY and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
         '0';
 
     --------------------------------
