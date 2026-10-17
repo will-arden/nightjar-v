@@ -1,7 +1,16 @@
+import sys, os
+import random
+import math
+import difflib
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import tb_tools
 
+###############
+# VUnit Setup #
+###############
+
 from vunit import VUnit
-import difflib
 
 vu = VUnit.from_argv() # Create VUnit instance by parsing command line arguments
 vu.add_vhdl_builtins() # Add VUnit's builtin HDL utilities for checking, logging, communication...
@@ -12,13 +21,17 @@ vu.set_sim_option("ghdl.elab_flags", ["-frelaxed", "-Wshared"]) # Set GHDL simul
 # Add RTL files
 lib.add_source_file("../rtl/sync_fifo.vhd")
 
-# Add testbench files
-lib.add_source_files("*.vhd")
+# Declare the testbench
+lib.add_source_files("sync_fifo/*.vhd")
+tb = lib.test_bench("tb_sync_fifo")
 
 # Generate test vectors
 tb_tools.generate_test_vectors_csv(32, 64, filepath="test_artefacts/sync_fifo_inputs.csv")
 
-# Run VUnit simulation
+##########################
+# Begin VUnit simulation #
+##########################
+
 try:
     vu.main()
 except SystemExit as e:

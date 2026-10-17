@@ -1,3 +1,15 @@
+--------------------------------------------------------------------------------------------------
+--                                      ~   nightjar-v   ~                                      --
+--------------------------------------------------------------------------------------------------
+-- Filename:    sync_fifo.vhd
+-- Author:      Will Arden
+-- Date:        17th October 2026
+-- Brief:       Synchronous FIFO element.
+-- Description: This is a generic, synchronous, RAM-based FIFO.
+-- Remarks:     To control what kind of RAM is used, modify generic_ram.
+--------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------
+
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -57,15 +69,11 @@ architecture rtl of sync_fifo is
 
 begin
 
-  -- Connect internal signals to outputs
-  wr_ready <= wr_ready_i;
-  rd_valid <= rd_valid_i;
-  full     <= full_i;
+  --------------------------
+  -- Instantiate FIFO RAM --
+  --------------------------
 
-  wr_handshake <= wr_ready_i and wr_valid;
-
-  -- Instantiate RAM
-  generic_ram_inst : entity work.generic_ram
+  x_generic_ram : entity work.generic_ram
     generic map(
       G_WIDTH    => G_WIDTH,
       G_DEPTH    => G_DEPTH
@@ -91,9 +99,9 @@ begin
       b_wr_byte_en => (others => '0')
     );
 
-  -- Read output logic
-  --------------------------------------------------------
-  --------------------------------------------------------
+  -----------------------
+  -- Read output logic --
+  -----------------------
 
   -- Combinationally read from the memory
   pipe(0) <= mem(to_integer(unsigned(rd_ptr)));
@@ -116,32 +124,11 @@ begin
   -- Drive the output from the final pipeline stage
   rd_data <= pipe(G_REG_OUT);
 
-  -- Combinational status assignments
-  -- TODO: Make these registered outputs by including their logic in the synchronous process
-  --------------------------------------------------------
-  --------------------------------------------------------
+  ------------------------
+  -- FIFO control logic --
+  ------------------------
 
-  -- The FIFO is ready as long as it is not full
-  wr_ready_i <= '1' when (full_i = '0') else
-    '0';
-
-  -- The FIFO is outputting valid read data unless it is empty
-  rd_valid_i <= '1' when (empty_i = '0') else
-    '0';
-
-  -- The FIFO is empty when the level is 0
-  empty_i <= '1' when (to_integer(unsigned(level)) = 0) else
-    '0';
-
-  -- The FIFO is full when the level is at its maximum capacity
-  full_i <= '1' when (to_integer(unsigned(level)) = G_DEPTH - 1) else
-    '0';
-
-  -- Synchronous logic
-  --------------------------------------------------------
-  --------------------------------------------------------
-
-  sync_fifo_proc : process (clk) is
+  fifo_ctrl_proc : process (clk) is
     variable v_read  : boolean := false;
     variable v_write : boolean := false;
   begin
@@ -181,6 +168,36 @@ begin
       end if;
 
     end if;
-  end process sync_fifo_proc;
+  end process;
+
+  --------------------------------------
+  -- Combinational status assignments --
+  --------------------------------------
+
+  -- The FIFO is ready as long as it is not full
+  wr_ready_i <= '1' when (full_i = '0') else
+    '0';
+
+  -- The FIFO is outputting valid read data unless it is empty
+  rd_valid_i <= '1' when (empty_i = '0') else
+    '0';
+
+  -- The FIFO is empty when the level is 0
+  empty_i <= '1' when (to_integer(unsigned(level)) = 0) else
+    '0';
+
+  -- The FIFO is full when the level is at its maximum capacity
+  full_i <= '1' when (to_integer(unsigned(level)) = G_DEPTH - 1) else
+    '0';
+
+  -----------------
+  -- Misc. logic --
+  -----------------
+
+  wr_handshake <= wr_ready_i and wr_valid;
+
+  wr_ready <= wr_ready_i;
+  rd_valid <= rd_valid_i;
+  full     <= full_i;
 
 end architecture rtl;
