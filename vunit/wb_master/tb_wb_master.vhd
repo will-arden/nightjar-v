@@ -199,7 +199,7 @@ begin
                     wr_req(
                     addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
                     data    => std_logic_vector(to_unsigned((i * 4) + 1, G_DATA_WIDTH)),
-                    byte_en => (wr_req_byte_en'range => '0'),
+                    byte_en => (wr_req_byte_en'range => '1'),
                     timeout => 500
                     );
                 end loop;

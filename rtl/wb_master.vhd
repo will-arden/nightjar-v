@@ -26,6 +26,7 @@ entity wb_master is
     generic (
         G_ADDR_WIDTH        : positive := 32;
         G_DATA_WIDTH        : positive := 32;
+        G_REQ_FIFO_SIZE     : natural  := 8;
         G_PRIORITISE_READS  : boolean  := false;
         G_RETRY_TIMEOUT_CYC : positive := 10
     );
@@ -82,8 +83,8 @@ architecture rtl of wb_master is
     signal state      : state_t;
     signal next_state : state_t;
 
-    -- Declare a backup buffer to hold a secondary request if a write and read are simultaneously requested
-    type backup_buf_t is record
+    -- Declare a buffer to hold secondary requests while they are waiting to be executed
+    type op_buf_t is record
         consume : std_logic;
         valid   : std_logic;
         wr_en   : std_logic;
@@ -91,170 +92,207 @@ architecture rtl of wb_master is
         data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
         byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
     end record;
-    signal backup_buf : backup_buf_t;
+    signal sec_buf : op_buf_t;
 
-    -- Function to select the next request to act upon
-    type op_t is (NONE, RD, WR);
-    function F_GET_NEXT_REQ return op_t is
-    begin
-        if (G_PRIORITISE_READS) then
-            if (rd_req_valid = '1') then
-                return RD;
-            elsif (wr_req_valid = '1') then
-                return WR;
-            end if;
-        else
-            if (wr_req_valid = '1') then
-                return WR;
-            elsif (rd_req_valid = '1') then
-                return RD;
-            end if;
-        end if;
-        return NONE;
-    end function;
+    -- FIFO data consists of (from MSB down to LSB):
+    --      Read:
+    --          - Valid
+    --          - Address
+    --      Write:
+    --          - Valid
+    --          - Address
+    --          - Data
+    --          - Byte-enable
+    constant C_FIFO_WIDTH : natural := (2 * (1 + G_ADDR_WIDTH)) + G_DATA_WIDTH + ((G_DATA_WIDTH + 7) / 8);
 
-    signal rty_timer : unsigned(log2ceil(G_RETRY_TIMEOUT_CYC) - 1 downto 0);
+    -- Declare FIFO interfacing signals
+    type fifo_ctrl_t is record
+        wr_valid : std_logic;
+        wr_ready : std_logic;
+        wr_data  : std_logic_vector(C_FIFO_WIDTH - 1 downto 0);
+        rd_valid : std_logic;
+        rd_ready : std_logic;
+        rd_data  : std_logic_vector(C_FIFO_WIDTH - 1 downto 0);
+        full     : std_logic;
+        empty    : std_logic;
+    end record;
+    signal req_fifo : fifo_ctrl_t;
+
+    -- Outputs from the request buffer
+    signal rd_req_valid_in   : std_logic;
+    signal rd_req_addr_in    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
+    signal wr_req_valid_in   : std_logic;
+    signal wr_req_addr_in    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
+    signal wr_req_data_in    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal wr_req_byte_en_in : std_logic_vector(((G_DATA_WIDTH + 7) / 8) - 1 downto 0);
+
+    -- Declare primary/secondary request signals
+    type req_t is record
+        wr_en   : std_logic;
+        valid   : std_logic;
+        ready   : std_logic;
+        addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
+        data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+        byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
+    end record;
+    signal pri_req : req_t;
+    signal sec_req : req_t;
+
+    -- Misc. internal signals
+    signal req_sel : std_logic;
 
 begin
 
-    --------------------
-    -- Input handling --
-    --------------------
+    -----------------------
+    -- Request buffering --
+    -----------------------
 
-    backup_buf_proc : process (clk) is
+    -- (Optional) Instantiate a FIFO for incoming requests
+    gen_req_fifo : if ((G_REQ_FIFO_SIZE > 0) and (C_FIFO_WIDTH > 0)) generate
+
+        x_req_fifo : entity work.sync_fifo
+            generic map(
+                G_WIDTH   => C_FIFO_WIDTH,
+                G_DEPTH   => G_REQ_FIFO_SIZE,
+                G_REG_OUT => 0
+            )
+            port map
+            (
+                clk          => clk,
+                rst          => rst,
+                wr_valid     => req_fifo.wr_valid,
+                wr_ready     => req_fifo.wr_ready,
+                wr_data      => req_fifo.wr_data,
+                rd_valid     => req_fifo.rd_valid,
+                rd_ready     => req_fifo.rd_ready,
+                rd_data      => req_fifo.rd_data,
+                level        => open,
+                full         => req_fifo.full,
+                almost_full  => open,
+                empty        => req_fifo.empty,
+                almost_empty => open
+            );
+
+        -- Connect inputs (request-side)
+        req_fifo.wr_valid <= (wr_req_valid or rd_req_valid);
+        req_fifo.wr_data  <= (rd_req_valid & rd_req_addr & wr_req_valid & wr_req_addr & wr_req_data & wr_req_byte_en);
+
+        -- Unpack FIFO output
+        rd_req_valid_in   <= req_fifo.rd_data(C_FIFO_WIDTH - 1);
+        rd_req_addr_in    <= req_fifo.rd_data(C_FIFO_WIDTH - 2 downto C_FIFO_WIDTH - G_ADDR_WIDTH - 1);
+        wr_req_valid_in   <= req_fifo.rd_data(C_FIFO_WIDTH - G_ADDR_WIDTH - 2);
+        wr_req_addr_in    <= req_fifo.rd_data(C_FIFO_WIDTH - G_ADDR_WIDTH - 3 downto C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - 2);
+        wr_req_data_in    <= req_fifo.rd_data(C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - 3 downto C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - 2);
+        wr_req_byte_en_in <= req_fifo.rd_data(C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - 3 downto C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - ((G_DATA_WIDTH + 7) / 8) - 2);
+        assert ((C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - ((G_DATA_WIDTH + 7) / 8) - 2) = 0) report "FIFO output is incorrectly sliced." severity error;
+
+    end generate gen_req_fifo;
+
+    -- (Optional) Do not generate a request buffer
+    gen_no_req_fifo : if (not (G_REQ_FIFO_SIZE > 0) and (C_FIFO_WIDTH > 0)) generate
+        assert (false) report "Not implemented." severity failure;
+    end generate gen_no_req_fifo;
+
+    ----------------------------------------------------------------
+    -- Separate read/write streams into primary/secondary streams --
+    ----------------------------------------------------------------
+
+    gen_pri_is_write : if (not G_PRIORITISE_READS) generate
+        pri_req.wr_en   <= '1';
+        pri_req.valid   <= wr_req_valid_in;
+        pri_req.addr    <= wr_req_addr_in;
+        pri_req.data    <= wr_req_data_in;
+        pri_req.byte_en <= wr_req_byte_en_in;
+        sec_req.wr_en   <= '0';
+        sec_req.valid   <= rd_req_valid_in;
+        sec_req.addr    <= rd_req_addr_in;
+    end generate gen_pri_is_write;
+
+    gen_pri_is_read : if (G_PRIORITISE_READS) generate
+        pri_req.wr_en   <= '0';
+        pri_req.valid   <= rd_req_valid_in;
+        pri_req.addr    <= rd_req_addr_in;
+        sec_req.wr_en   <= '1';
+        sec_req.valid   <= wr_req_valid_in;
+        sec_req.addr    <= wr_req_addr_in;
+        sec_req.data    <= wr_req_data_in;
+        sec_req.byte_en <= wr_req_byte_en_in;
+    end generate gen_pri_is_read;
+
+    -- Place secondary requests in a buffer until they can be executed
+    sec_buf_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-
-            -- Clear the contents of the buffer when the consume signal is asserted
-            if (backup_buf.consume = '1') then
-                backup_buf.valid <= '0';
+            if (req_fifo.rd_valid = '1' and req_fifo.rd_ready = '1') then
+                sec_buf.wr_en   <= sec_req.wr_en;
+                sec_buf.valid   <= sec_req.valid;
+                sec_buf.addr    <= sec_req.addr;
+                sec_buf.data    <= sec_req.data;
+                sec_buf.byte_en <= sec_req.byte_en;
             end if;
-
-            -- If there are two requests at once, copy the non-priority request into the backup buffer
-            if ((wr_req_valid = '1' and wr_req_ready = '1') and (rd_req_valid = '1' and rd_req_ready = '1')) then
-                backup_buf.valid <= '1';
-                if (F_GET_NEXT_REQ = WR) then
-                    backup_buf.wr_en <= '0';
-                    backup_buf.addr  <= rd_req_addr;
-                elsif (F_GET_NEXT_REQ = RD) then
-                    backup_buf.wr_en   <= '1';
-                    backup_buf.addr    <= wr_req_addr;
-                    backup_buf.data    <= wr_req_data;
-                    backup_buf.byte_en <= wr_req_byte_en;
-                end if;
-                assert (F_GET_NEXT_REQ /= NONE) report "Failed to copy into the backup buffer; F_GET_NEXT_REQ returned NONE." severity error;
-            end if;
-
-            -- Initialise on reset
             if (rst = '1') then
-                backup_buf.valid <= '0';
+                sec_buf.valid <= '0';
             end if;
         end if;
     end process;
-
-    -- Assert the ready signals when:
-    --      > there is nothing waiting in the backup buffer, and
-    --      > there is not a transaction currently in-progress on the Wishbone bus
-    wr_req_ready <=
-        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and state /= RTY and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
-        '0';
-    rd_req_ready <=
-        '1' when ((backup_buf.valid = '0' or backup_buf.consume = '1') and state /= STB and state /= RTY and not (state = ACK and not (wb_mem_ack = '1' or wb_mem_err = '1'))) else
-        '0';
 
     --------------------------------
     -- Finite State Machine (FSM) --
     --------------------------------
 
-    -- Asynchronous process to determine the next state
-    next_state_proc : process (state, wr_req_valid, wr_req_ready, rd_req_valid, rd_req_ready, wb_mem_ack, wb_mem_err, wb_mem_rty, rty_timer) is
+    req_fifo.rd_ready <=
+    '0' when (sec_buf.valid = '1') else                                         -- Not ready when there is a secondary request waiting
+    '0' when (next_state = STB and (wb_mem_ack = '0' or wb_mem_err = '0')) else -- Not ready while the Wishbone master is waiting for an ACK
+    '0' when (next_state = RTY) else                                            -- Not ready while the bus is waiting to retry
+    '0' when (next_state = FSM_ERROR) else                                      -- The core can completely lock up in this case
+    '1';
+
+    -- Process to select the next state
+    next_state_proc : process (state, pri_req, sec_req) is
     begin
-        next_state <= state;
         case (state) is
 
-                -- When there is a request handshake, initiate a Wishbone memory transaction
             when IDLE =>
-                if ((wr_req_valid = '1' and wr_req_ready = '1') or (rd_req_valid = '1' and rd_req_ready = '1')) then
+                if (pri_req.valid = '1') then
                     next_state <= STB;
                 end if;
+                assert (not (pri_req.valid = '0' and sec_req.valid = '1')) report "Returned to IDLE state without acting on the secondary request." severity error;
 
-                -- STB is asserted in this cycle
             when STB =>
                 next_state <= ACK;
 
-                -- Wait for an ACK/RTY/ERR reponse before returning to IDLE, or going straight into the next transfer if necessary
             when ACK =>
                 if (wb_mem_ack = '1' or wb_mem_err = '1') then
-                    if ((wr_req_valid = '1' and wr_req_ready = '1') or (rd_req_valid = '1' and rd_req_ready = '1')) then
+                    if (pri_req.valid = '1' or sec_req.valid = '1') then
                         next_state <= STB;
-                    else
-                        next_state <= IDLE;
                     end if;
                 elsif (wb_mem_rty = '1') then
                     next_state <= RTY;
                 end if;
 
-                -- Stay in this state until the retry timer expires
             when RTY =>
-                if (rty_timer = 0) then
-                    next_state <= STB;
-                end if;
 
             when others => next_state <= FSM_ERROR;
         end case;
     end process;
 
-    ctrl_proc : process (clk) is
+    -- FSM process
+    fsm_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
 
-            -- Update the state
-            state <= next_state;
+            state <= next_state; -- Advance the state
 
-            -- Clear signals upon returning to IDLE
-            if (next_state <= IDLE) then
-                wb_mem_cyc     <= '0';
-                wb_mem_stb     <= '0';
-            end if;
-
-            -- Update the Wishbone outputs upon entering the STB state
+            -- Hold STB high until there is a response on the Wishbone bus
             if (next_state = STB) then
-                wb_mem_cyc <= '1';
-                wb_mem_stb <= '1';
-
-                if (state /= RTY) then -- If this is a retry, do not update the other Wishbone outputs
-
-                    -- Prioritise requests held in the backup buffer
-                    if (backup_buf.valid = '1') then
-                        wb_mem_wr_en   <= backup_buf.wr_en;
-                        wb_mem_addr    <= backup_buf.addr;
-                        wb_mem_wr_data <= backup_buf.data;
-                        wb_mem_byte_en <= backup_buf.byte_en;
-
-                        -- Otherwise, the STB state must've been triggered by a new request
-                    else
-                        if (F_GET_NEXT_REQ = WR) then
-                            wb_mem_wr_en   <= '1';
-                            wb_mem_addr    <= wr_req_addr;
-                            wb_mem_wr_data <= wr_req_data;
-                            wb_mem_byte_en <= wr_req_byte_en;
-                        else
-                            wb_mem_wr_en <= '0';
-                            wb_mem_addr  <= rd_req_addr;
-                        end if;
-
-                        assert (F_GET_NEXT_REQ /= NONE) report "STB state enterred erroneously (F_GET_NEXT_REQ = NONE)." severity error;
-                        assert ((wr_req_valid = '1' and wr_req_ready = '1') or (rd_req_valid = '1' and rd_req_ready = '1')) report "STB state enterred erroneously (no new/in-progress requests)." severity error;
-                    end if;
-                end if;
+                wb_mem_cyc     <= '1';
+                wb_mem_stb     <= '1';
+                wb_mem_wr_en   <= pri_req.wr_en;
+                wb_mem_addr    <= pri_req.addr; -- TODO: for now just focus on primary requests
+                wb_mem_byte_en <= pri_req.byte_en;
+                wb_mem_wr_data <= pri_req.data;
             end if;
 
-            -- Initialise on reset
-            if (rst = '1') then
-                state      <= IDLE;
-                wb_mem_cyc <= '0';
-                wb_mem_stb <= '0';
-            end if;
         end if;
     end process;
 
