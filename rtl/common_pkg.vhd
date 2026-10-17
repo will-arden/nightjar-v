@@ -27,16 +27,16 @@ package body common_pkg is
             i := i + 1;
         end loop;
         return i;
-    end function log2;
+    end function;
 
     function log2ceil(num : natural) return natural is
-        variable lognum       : natural := log2(num);
     begin
-        if (num > (2 ** lognum)) then
-            return lognum + 1;
-        end if;
-        return lognum;
-    end function log2ceil;
+        for i in 0 to natural'high loop
+            if (2 ** i) >= num then
+                return i;
+            end if;
+        end loop;
+    end function;
 
     function to_integer (bool : boolean) return integer is
     begin
@@ -45,7 +45,7 @@ package body common_pkg is
         else
             return 0;
         end if;
-    end function to_integer;
+    end function;
 
     function to_uint (slv : std_logic_vector) return integer is
     begin
@@ -71,7 +71,7 @@ package body common_pkg is
     begin
         padded(slv'length - 1 downto 0) := slv;
         return padded;
-    end function pad;
+    end function;
 
     function ones_count(slv : std_logic_vector) return natural is
         variable v_count        : natural := 0;
