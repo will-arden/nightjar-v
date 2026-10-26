@@ -141,7 +141,7 @@ architecture rtl of wb_master is
     type req_t is record
         wr_en   : std_logic;
         valid   : std_logic;
-        ready   : std_logic;
+        consume : std_logic;
         addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
         data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
         byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
@@ -162,6 +162,7 @@ architecture rtl of wb_master is
     signal req_empty_reg  : std_logic;
     signal req_pair_valid : std_logic;
     signal req_pair_ready : std_logic;
+    signal scoreboard     : std_logic_vector(2 downto 0);
 
 begin
 
@@ -285,15 +286,15 @@ begin
                     def_req.data    <= sec_req.data;
                     def_req.byte_en <= sec_req.byte_en;
 
-                    assert (def_req.valid = '0' or def_req.ready = '1')
+                    assert (def_req.valid = '0' or def_req.consume = '1')
                     report "A valid deferred request was overwritten!"
                         severity error;
 
-                elsif (def_req.ready = '1') then -- Invalidate the buffer if there's nothing to replace the contents
+                elsif (def_req.consume = '1') then -- Invalidate the buffer if there's nothing to replace the contents
                     def_req.valid <= '0';
                 end if;
 
-                assert (def_req.valid = '0' or def_req.ready = '1')
+                assert (def_req.valid = '0' or def_req.consume = '1')
                 report "The next chronological request was at risk of being overwritten."
                     severity warning;
 
@@ -310,18 +311,33 @@ begin
         req_pair_ready <= '1';
 
         -- Deferred request waiting
-        if (def_req.valid = '1' and def_req.ready = '0') then
+        if (def_req.valid = '1' and def_req.consume = '0' and scoreboard(0) = '0') then
             req_pair_ready <= '0';
         end if;
 
         -- Primary request waiting
-        if (pri_req.valid = '1' and pri_req.ready = '0') then
+        if (pri_req.valid = '1' and pri_req.consume = '0' and scoreboard(1) = '0') then
             req_pair_ready <= '0';
         end if;
 
         -- Secondary request waiting
-        if (sec_req.valid = '1' and sec_req.ready = '0') then
+        if (sec_req.valid = '1' and sec_req.consume = '0' and scoreboard(2) = '0') then
             req_pair_ready <= '0';
+        end if;
+    end process;
+
+    -- Process to control a scoreboard to track which requests have been actioned
+    scoreboard_proc : process (clk) is
+    begin
+        if (rising_edge(clk)) then
+            scoreboard(0) <= def_req.consume;
+            scoreboard(1) <= pri_req.consume;
+            scoreboard(2) <= sec_req.consume;
+
+            -- Re-initialise the scoreboard once new requests are accepted (or upon reset)
+            if (rst = '1' or (req_pair_ready = '1' and req_pair_valid = '1')) then
+                scoreboard <= (others => '0');
+            end if;
         end if;
     end process;
 
@@ -330,57 +346,57 @@ begin
     begin
         req_sel <= "00"; -- By default, select the deferred request
 
-        if (sec_req.valid = '1') then -- Lowest priority
+        if (sec_req.valid = '1' and scoreboard(2) = '0') then -- Lowest priority
             req_sel <= "10";
         end if;
 
-        if (pri_req.valid = '1') then
+        if (pri_req.valid = '1' and scoreboard(1) = '0') then
             req_sel <= "01";
         end if;
 
-        if (def_req.valid = '1') then -- Highest priority
+        if (def_req.valid = '1' and scoreboard(0) = '0') then -- Highest priority
             req_sel <= "00";
         end if;
     end process;
 
-    -- Combinational process to select and consume one of the three request lanes (deferred/primary/secondary)
+    -- Combinational process to select TODO: and consume? surely not? one of the three request lanes (deferred/primary/secondary)
     comb_req_sel_proc : process (def_req, pri_req, sec_req, req_sel) is
     begin
 
         -- Default assignments
-        def_req.ready <= '0';
-        pri_req.ready <= '0';
-        sec_req.ready <= '0';
-        sreq.wr_en    <= '0';
-        sreq.valid    <= '0';
-        sreq.addr     <= (others => '0');
-        sreq.data     <= (others => '0');
-        sreq.byte_en  <= (others => '0');
+        def_req.consume <= '0';
+        pri_req.consume <= '0';
+        sec_req.consume <= '0';
+        sreq.wr_en      <= '0';
+        sreq.valid      <= '0';
+        sreq.addr       <= (others => '0');
+        sreq.data       <= (others => '0');
+        sreq.byte_en    <= (others => '0');
 
         case req_sel is
             when "00" =>
-                def_req.ready <= '1';
-                sreq.wr_en    <= def_req.wr_en;
-                sreq.valid    <= def_req.valid;
-                sreq.addr     <= def_req.addr;
-                sreq.data     <= def_req.data;
-                sreq.byte_en  <= def_req.byte_en;
+                --def_req.consume <= '1';
+                sreq.wr_en      <= def_req.wr_en;
+                sreq.valid      <= def_req.valid;
+                sreq.addr       <= def_req.addr;
+                sreq.data       <= def_req.data;
+                sreq.byte_en    <= def_req.byte_en;
 
             when "01" =>
-                pri_req.ready <= '1';
-                sreq.wr_en    <= pri_req.wr_en;
-                sreq.valid    <= pri_req.valid;
-                sreq.addr     <= pri_req.addr;
-                sreq.data     <= pri_req.data;
-                sreq.byte_en  <= pri_req.byte_en;
+                --pri_req.consume <= '1';
+                sreq.wr_en      <= pri_req.wr_en;
+                sreq.valid      <= pri_req.valid;
+                sreq.addr       <= pri_req.addr;
+                sreq.data       <= pri_req.data;
+                sreq.byte_en    <= pri_req.byte_en;
 
             when "10" =>
-                sec_req.ready <= '1';
-                sreq.wr_en    <= sec_req.wr_en;
-                sreq.valid    <= sec_req.valid;
-                sreq.addr     <= sec_req.addr;
-                sreq.data     <= sec_req.data;
-                sreq.byte_en  <= sec_req.byte_en;
+                --sec_req.consume <= '1';
+                sreq.wr_en      <= sec_req.wr_en;
+                sreq.valid      <= sec_req.valid;
+                sreq.addr       <= sec_req.addr;
+                sreq.data       <= sec_req.data;
+                sreq.byte_en    <= sec_req.byte_en;
 
             when others => -- Not allowed
         end case;
