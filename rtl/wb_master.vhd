@@ -26,8 +26,8 @@ entity wb_master is
     generic (
         G_ADDR_WIDTH        : positive := 32;
         G_DATA_WIDTH        : positive := 32;
-        G_REQ_FIFO_SIZE     : natural  := 8;
-        G_RESP_FIFO_SIZE    : natural  := 8;
+        G_REQ_FIFO_DEPTH    : natural  := 8;
+        G_RESP_FIFO_DEPTH   : natural  := 8;
         G_PRIORITISE_READS  : boolean  := false;
         G_RETRY_TIMEOUT_CYC : positive := 10
     );
@@ -84,16 +84,16 @@ architecture rtl of wb_master is
     signal state      : state_t;
     signal next_state : state_t;
 
-    -- Declare a buffer to hold secondary requests while they are waiting to be executed
-    type op_buf_t is record
-        consume : std_logic;
-        valid   : std_logic;
-        wr_en   : std_logic;
-        addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
-        data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-        byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
-    end record;
-    signal sec_buf : op_buf_t;
+    -- -- Declare a buffer to hold secondary requests while they are waiting to be executed
+    -- type op_buf_t is record
+    --     consume : std_logic;
+    --     valid   : std_logic;
+    --     wr_en   : std_logic;
+    --     addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
+    --     data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    --     byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
+    -- end record;
+    -- --signal def_req : op_buf_t;
 
     -- FIFO data consists of (from MSB down to LSB):
     --      Read:
@@ -104,7 +104,17 @@ architecture rtl of wb_master is
     --          - Address
     --          - Data
     --          - Byte-enable
-    constant C_FIFO_WIDTH : natural := (2 * (1 + G_ADDR_WIDTH)) + G_DATA_WIDTH + ((G_DATA_WIDTH + 7) / 8);
+    constant C_WR_BE_LOWER : natural := 0;                                                                  -- Write Byte-Enable Lower Bound
+    constant C_WR_BE_UPPER : natural := C_WR_BE_LOWER + ((G_DATA_WIDTH + 7) / 8) - 1;                       -- Write Byte-Enable Upper Bound
+    constant C_WR_D_LOWER  : natural := C_WR_BE_UPPER + 1;                                                  -- Write Data Lower Bound
+    constant C_WR_D_UPPER  : natural := C_WR_D_LOWER + G_DATA_WIDTH - 1;                                    -- Write Data Upper Bound
+    constant C_WR_A_LOWER  : natural := C_WR_D_UPPER + 1;                                                   -- Write Address Lower Bound
+    constant C_WR_A_UPPER  : natural := C_WR_A_LOWER + G_ADDR_WIDTH - 1;                                    -- Write Address Upper Bound
+    constant C_WR_V_BIT    : natural := C_WR_A_UPPER + 1;                                                   -- Write Valid Bit
+    constant C_RD_A_LOWER  : natural := C_WR_V_BIT + 1;                                                     -- Read Address Lower Bound
+    constant C_RD_A_UPPER  : natural := C_RD_A_LOWER + G_ADDR_WIDTH - 1;                                    -- Read Address Upper Bound
+    constant C_RD_V_BIT    : natural := C_RD_A_UPPER + 1;                                                   -- Read Valid Bit
+    constant C_FIFO_WIDTH  : natural := (2 * (1 + G_ADDR_WIDTH)) + G_DATA_WIDTH + ((G_DATA_WIDTH + 7) / 8); -- Total FIFO width
 
     -- Declare FIFO interfacing signals
     type fifo_ctrl_t is record
@@ -136,8 +146,10 @@ architecture rtl of wb_master is
         data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
         byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
     end record;
-    signal pri_req : req_t;
-    signal sec_req : req_t;
+    signal pri_req : req_t; -- Asynchronous
+    signal sec_req : req_t; -- Asynchronous
+    signal def_req : req_t; -- Buffered secondary request
+    signal sreq    : req_t; -- Selected request (single-lane)
 
     -- Declare internal response signals
     signal resp_valid_out   : std_logic;
@@ -146,22 +158,27 @@ architecture rtl of wb_master is
     signal resp_err_out     : std_logic;
 
     -- Misc. internal signals
-    signal req_sel       : std_logic;
-    signal req_empty_reg : std_logic;
+    signal req_sel        : std_logic_vector(1 downto 0);
+    signal req_empty_reg  : std_logic;
+    signal req_pair_valid : std_logic;
+    signal req_pair_ready : std_logic;
 
 begin
 
-    -----------------------
-    -- Request buffering --
-    -----------------------
+    ----------------------------------
+    -- (Optional) Request buffering --
+    ----------------------------------
 
-    -- (Optional) Instantiate a FIFO for incoming requests
-    gen_req_fifo : if ((G_REQ_FIFO_SIZE > 0) and (C_FIFO_WIDTH > 0)) generate
+    -- Request buffering can help to reduce stalling by increasing parallelism.
+    -- Whenever either a read/write request is input, it is passed through the FIFO; requests are handled in pairs so that they are processed chronologically.
+
+    -- Instantiate a FIFO for incoming requests
+    gen_req_fifo : if ((G_REQ_FIFO_DEPTH > 0) and (C_FIFO_WIDTH > 0)) generate
 
         x_req_fifo : entity work.sync_fifo
             generic map(
                 G_WIDTH   => C_FIFO_WIDTH,
-                G_DEPTH   => G_REQ_FIFO_SIZE,
+                G_DEPTH   => G_REQ_FIFO_DEPTH,
                 G_REG_OUT => 0
             )
             port map
@@ -184,27 +201,52 @@ begin
         -- Connect inputs (request-side)
         req_fifo.wr_valid <= (wr_req_valid or rd_req_valid);
         req_fifo.wr_data  <= (rd_req_valid & rd_req_addr & wr_req_valid & wr_req_addr & wr_req_data & wr_req_byte_en);
+        rd_req_ready      <= req_fifo.wr_ready;
+        wr_req_ready      <= req_fifo.wr_ready;
 
         -- Unpack FIFO output
-        rd_req_valid_in   <= req_fifo.rd_data(C_FIFO_WIDTH - 1);
-        rd_req_addr_in    <= req_fifo.rd_data(C_FIFO_WIDTH - 2 downto C_FIFO_WIDTH - G_ADDR_WIDTH - 1);
-        wr_req_valid_in   <= req_fifo.rd_data(C_FIFO_WIDTH - G_ADDR_WIDTH - 2);
-        wr_req_addr_in    <= req_fifo.rd_data(C_FIFO_WIDTH - G_ADDR_WIDTH - 3 downto C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - 2);
-        wr_req_data_in    <= req_fifo.rd_data(C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - 3 downto C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - 2);
-        wr_req_byte_en_in <= req_fifo.rd_data(C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - 3 downto C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - ((G_DATA_WIDTH + 7) / 8) - 2);
-        assert ((C_FIFO_WIDTH - (2 * G_ADDR_WIDTH) - G_DATA_WIDTH - ((G_DATA_WIDTH + 7) / 8) - 2) = 0) report "FIFO output is incorrectly sliced." severity error;
+        rd_req_valid_in   <= req_fifo.rd_data(C_RD_V_BIT);
+        rd_req_addr_in    <= req_fifo.rd_data(C_RD_A_UPPER downto C_RD_A_LOWER);
+        wr_req_valid_in   <= req_fifo.rd_data(C_WR_V_BIT);
+        wr_req_addr_in    <= req_fifo.rd_data(C_WR_A_UPPER downto C_WR_A_LOWER);
+        wr_req_data_in    <= req_fifo.rd_data(C_WR_D_UPPER downto C_WR_D_LOWER);
+        wr_req_byte_en_in <= req_fifo.rd_data(C_WR_BE_UPPER downto C_WR_BE_LOWER);
+
+        -- Connect valid/ready signals
+        req_pair_valid    <= req_fifo.rd_valid;
+        req_fifo.rd_ready <= req_pair_ready;
 
     end generate gen_req_fifo;
 
-    -- (Optional) Do not generate a request buffer
-    gen_no_req_fifo : if (not (G_REQ_FIFO_SIZE > 0) and (C_FIFO_WIDTH > 0)) generate
-        assert (false) report "Not implemented." severity failure;
+    -- Pass the inputs directly if no FIFO is required
+    gen_no_req_fifo : if (not (G_REQ_FIFO_DEPTH > 0) and (C_FIFO_WIDTH > 0)) generate
+        assert (false)
+        report "No request FIFO is used."
+            severity warning;
+
+        rd_req_valid_in   <= rd_req_valid;
+        rd_req_addr_in    <= rd_req_addr;
+        wr_req_valid_in   <= wr_req_valid;
+        wr_req_addr_in    <= wr_req_addr;
+        wr_req_data_in    <= wr_req_data;
+        wr_req_byte_en_in <= wr_req_byte_en;
+
+        -- Connect valid/ready signals
+        req_pair_valid <= rd_req_valid_in or wr_req_valid_in;
+        rd_req_ready   <= req_pair_ready;
+        wr_req_ready   <= req_pair_ready;
     end generate gen_no_req_fifo;
 
-    ----------------------------------------------------------------
-    -- Separate read/write streams into primary/secondary streams --
-    ----------------------------------------------------------------
+    ----------------
+    -- Sequencing --
+    ----------------
 
+    -- Firstly, the read/write streams are translated into primary/secondary streams, based on priority (G_PRIORITISE_READS).
+    -- If two requests arrive simultaneously, the non-priority request will be copied into a buffer (the "deferred request"). This must be actioned before normal operation continues.
+    -- The next request to be actioned must be chosen; in order of priority, this could be a 1) deferred request 2) primary request 3) secondary request.
+    -- The output is a single-lane stream of requests to the Wishbone bus handler.
+
+    -- Primary/secondary translation (WRITE FIRST)
     gen_pri_is_write : if (not G_PRIORITISE_READS) generate
         pri_req.wr_en   <= '1';
         pri_req.valid   <= wr_req_valid_in;
@@ -216,6 +258,7 @@ begin
         sec_req.addr    <= rd_req_addr_in;
     end generate gen_pri_is_write;
 
+    -- Primary/secondary translation (READ FIRST)
     gen_pri_is_read : if (G_PRIORITISE_READS) generate
         pri_req.wr_en   <= '0';
         pri_req.valid   <= rd_req_valid_in;
@@ -227,163 +270,269 @@ begin
         sec_req.byte_en <= wr_req_byte_en_in;
     end generate gen_pri_is_read;
 
-    -- Place secondary requests in a buffer until they can be executed
-    sec_buf_proc : process (clk) is
+    -- Store defered requests until they can be actioned
+    def_req_proc : process (clk) is
     begin
         if (rising_edge(clk)) then
-            if (req_fifo.rd_valid = '1' and req_fifo.rd_ready = '1') then -- FIFO read handshake
-                sec_buf.wr_en   <= sec_req.wr_en;
-                sec_buf.valid   <= sec_req.valid;
-                sec_buf.addr    <= sec_req.addr;
-                sec_buf.data    <= sec_req.data;
-                sec_buf.byte_en <= sec_req.byte_en;
+            if (req_pair_valid = '1' and req_pair_ready = '1') then -- FIFO read handshake
+
+                -- When both requests arrive simultaneously, defer the secondary request
+                -- The FIFO read ready signal should be low when there is a pending deferred request, as not to overwrite it
+                if (pri_req.valid = '1' and sec_req.valid = '1') then
+                    def_req.wr_en   <= sec_req.wr_en;
+                    def_req.valid   <= sec_req.valid;
+                    def_req.addr    <= sec_req.addr;
+                    def_req.data    <= sec_req.data;
+                    def_req.byte_en <= sec_req.byte_en;
+
+                    assert (def_req.valid = '0' or def_req.ready = '1')
+                    report "A valid deferred request was overwritten!"
+                        severity error;
+
+                elsif (def_req.ready = '1') then -- Invalidate the buffer if there's nothing to replace the contents
+                    def_req.valid <= '0';
+                end if;
+
+                assert (def_req.valid = '0' or def_req.ready = '1')
+                report "The next chronological request was at risk of being overwritten."
+                    severity warning;
+
             end if;
             if (rst = '1') then
-                sec_buf.valid <= '0';
+                def_req.valid <= '0';
             end if;
         end if;
     end process;
+
+    -- Combinational process to accept another pair of requests
+    comb_req_pair_ready_proc : process (def_req, pri_req, sec_req) is
+    begin
+        req_pair_ready <= '1';
+
+        -- Deferred request waiting
+        if (def_req.valid = '1' and def_req.ready = '0') then
+            req_pair_ready <= '0';
+        end if;
+
+        -- Primary request waiting
+        if (pri_req.valid = '1' and pri_req.ready = '0') then
+            req_pair_ready <= '0';
+        end if;
+
+        -- Secondary request waiting
+        if (sec_req.valid = '1' and sec_req.ready = '0') then
+            req_pair_ready <= '0';
+        end if;
+    end process;
+
+    -- Combinational process to sequence requests
+    comb_req_seq_proc : process (def_req, pri_req, sec_req) is
+    begin
+        req_sel <= "00"; -- By default, select the deferred request
+
+        if (sec_req.valid = '1') then -- Lowest priority
+            req_sel <= "10";
+        end if;
+
+        if (pri_req.valid = '1') then
+            req_sel <= "01";
+        end if;
+
+        if (def_req.valid = '1') then -- Highest priority
+            req_sel <= "00";
+        end if;
+    end process;
+
+    -- Combinational process to select and consume one of the three request lanes (deferred/primary/secondary)
+    comb_req_sel_proc : process (def_req, pri_req, sec_req, req_sel) is
+    begin
+
+        -- Default assignments
+        def_req.ready <= '0';
+        pri_req.ready <= '0';
+        sec_req.ready <= '0';
+        sreq.wr_en    <= '0';
+        sreq.valid    <= '0';
+        sreq.addr     <= (others => '0');
+        sreq.data     <= (others => '0');
+        sreq.byte_en  <= (others => '0');
+
+        case req_sel is
+            when "00" =>
+                def_req.ready <= '1';
+                sreq.wr_en    <= def_req.wr_en;
+                sreq.valid    <= def_req.valid;
+                sreq.addr     <= def_req.addr;
+                sreq.data     <= def_req.data;
+                sreq.byte_en  <= def_req.byte_en;
+
+            when "01" =>
+                pri_req.ready <= '1';
+                sreq.wr_en    <= pri_req.wr_en;
+                sreq.valid    <= pri_req.valid;
+                sreq.addr     <= pri_req.addr;
+                sreq.data     <= pri_req.data;
+                sreq.byte_en  <= pri_req.byte_en;
+
+            when "10" =>
+                sec_req.ready <= '1';
+                sreq.wr_en    <= sec_req.wr_en;
+                sreq.valid    <= sec_req.valid;
+                sreq.addr     <= sec_req.addr;
+                sreq.data     <= sec_req.data;
+                sreq.byte_en  <= sec_req.byte_en;
+
+            when others => -- Not allowed
+        end case;
+    end process;
+
+    -- If the request is selected, it is ready
+    -- Here, there is a slight deviation in the traditional ready/valid handshake logic, in that technically the ready flag depends on the valid flag.
+    -- This is tolerated, since it is all internal logic; "ready" behaves more like "consume" for this use case.
+    -- def_req.ready <= (not req_sel(1)) and (not req_sel(0)); -- "00"
+    -- pri_req.ready <= (not req_sel(1)) and req_sel(0);       -- "01"
+    -- sec_req.ready <= req_sel(1) and (not req_sel(0));       -- "10"
 
     --------------------------------
     -- Finite State Machine (FSM) --
     --------------------------------
 
-    -- Collect the next operation(s) from the request FIFO
-    req_fifo.rd_ready <=
-    '1' when (req_empty_reg = '1') else    -- Skip the first transaction after the FIFO is empty, when it appears
-    '0' when (sec_buf.valid = '1') else    -- Not ready when there is a secondary request waiting
-    '0' when (next_state = ACK) else       -- Not ready while the Wishbone master is waiting for an ACK
-    '0' when (next_state = RTY) else       -- Not ready while the bus is waiting to retry
-    '0' when (next_state = FSM_ERROR) else -- The core can completely lock up in this case
-    '1';
+    -- -- Collect the next operation(s) from the request FIFO
+    -- req_fifo.rd_ready <=
+    -- '1' when (req_empty_reg = '1') else    -- Skip the first transaction after the FIFO is empty, when it appears
+    -- '0' when (def_req.valid = '1') else    -- Not ready when there is a secondary request waiting
+    -- '0' when (next_state = ACK) else       -- Not ready while the Wishbone master is waiting for an ACK
+    -- '0' when (next_state = RTY) else       -- Not ready while the bus is waiting to retry
+    -- '0' when (next_state = FSM_ERROR) else -- The core can completely lock up in this case
+    -- '1';
 
-    -- Process to select the next state
-    next_state_proc : process (state, req_fifo, pri_req, sec_req, sec_buf, wb_mem_ack, wb_mem_err, wb_mem_rty, wr_req_valid, rd_req_valid) is
-    begin
-        case (state) is
+    -- -- Process to select the next state
+    -- next_state_proc : process (state, req_fifo, pri_req, sec_req, def_req, wb_mem_ack, wb_mem_err, wb_mem_rty, wr_req_valid, rd_req_valid) is
+    -- begin
+    --     case (state) is
 
-            when IDLE =>
+    --         when IDLE =>
 
-                -- Begin a bus transaction if there is a valid request from the FIFO
-                if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
-                    next_state <= STB;
+    --             -- Begin a bus transaction if there is a valid request from the FIFO
+    --             if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
+    --                 next_state <= STB;
 
-                    -- Performance optimisation (for the first transaction, you can skip the FIFO)
-                elsif (req_fifo.empty = '1' and (wr_req_valid = '1' or rd_req_valid = '1')) then
-                    next_state <= STB;
-                    assert (req_fifo.rd_valid = '0') report "FIFO is reporting it is empty, but hasn't de-asserted its rd_valid signal." severity error;
+    --                 -- Performance optimisation (for the first transaction, you can skip the FIFO)
+    --             elsif (req_fifo.empty = '1' and (wr_req_valid = '1' or rd_req_valid = '1')) then
+    --                 next_state <= STB;
+    --                 assert (req_fifo.rd_valid = '0') report "FIFO is reporting it is empty, but hasn't de-asserted its rd_valid signal." severity error;
 
-                    -- Similarly, begin a bus transaction if there is a valid request waiting in the secondary buffer
-                    -- Technically, this should not happen from the IDLE state
-                elsif (sec_buf.valid = '1') then
-                    next_state <= STB;
-                    assert (false) report "Secondary buffer was not properly emptied before returning to the IDLE state." severity error;
-                end if;
+    --                 -- Similarly, begin a bus transaction if there is a valid request waiting in the secondary buffer
+    --                 -- Technically, this should not happen from the IDLE state
+    --             elsif (def_req.valid = '1') then
+    --                 next_state <= STB;
+    --                 assert (false) report "Secondary buffer was not properly emptied before returning to the IDLE state." severity error;
+    --             end if;
 
-            when STB =>
-                next_state <= ACK;
+    --         when STB =>
+    --             next_state <= ACK;
 
-            when ACK =>
-                if (wb_mem_ack = '1' or wb_mem_err = '1') then
-                    if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
-                        next_state <= STB;
-                    else
-                        next_state <= IDLE;
-                    end if;
-                elsif (wb_mem_rty = '1') then
-                    next_state <= RTY;
-                end if;
+    --         when ACK =>
+    --             if (wb_mem_ack = '1' or wb_mem_err = '1') then
+    --                 if (req_fifo.rd_valid = '1' and (pri_req.valid = '1' or sec_req.valid = '1')) then
+    --                     next_state <= STB;
+    --                 else
+    --                     next_state <= IDLE;
+    --                 end if;
+    --             elsif (wb_mem_rty = '1') then
+    --                 next_state <= RTY;
+    --             end if;
 
-            when RTY =>
+    --         when RTY =>
 
-            when others => next_state <= FSM_ERROR;
-        end case;
-    end process;
+    --         when others => next_state <= FSM_ERROR;
+    --     end case;
+    -- end process;
 
-    -- Synchronous control process
-    ctrl_proc : process (clk) is
-    begin
-        if (rising_edge(clk)) then
+    -- -- Synchronous control process
+    -- ctrl_proc : process (clk) is
+    -- begin
+    --     if (rising_edge(clk)) then
 
-            -- Advance the state
-            state <= next_state;
+    --         -- Advance the state
+    --         state <= next_state;
 
-            -- Hold STB high until there is a response on the Wishbone bus
-            if (next_state = STB) then
-                wb_mem_cyc <= '1';
-                wb_mem_stb <= '1';
+    --         -- Hold STB high until there is a response on the Wishbone bus
+    --         if (next_state = STB) then
+    --             wb_mem_cyc <= '1';
+    --             wb_mem_stb <= '1';
 
-                -- In the normal case, data is received from the FIFO/secondary buffer
-                if (req_fifo.rd_valid = '1' or sec_buf.valid = '1') then
+    --             -- In the normal case, data is received from the FIFO/secondary buffer
+    --             if (req_fifo.rd_valid = '1' or def_req.valid = '1') then
 
-                    -- Act on the primary request, if it is present, and if the secondary buffer is empty
-                    if (sec_buf.valid = '0' and pri_req.valid = '1') then
-                        wb_mem_wr_en   <= pri_req.wr_en;
-                        wb_mem_addr    <= pri_req.addr;
-                        wb_mem_byte_en <= pri_req.byte_en;
-                        wb_mem_wr_data <= pri_req.data;
+    --                 -- Act on the primary request, if it is present, and if the secondary buffer is empty
+    --                 if (def_req.valid = '0' and pri_req.valid = '1') then
+    --                     wb_mem_wr_en   <= pri_req.wr_en;
+    --                     wb_mem_addr    <= pri_req.addr;
+    --                     wb_mem_byte_en <= pri_req.byte_en;
+    --                     wb_mem_wr_data <= pri_req.data;
 
-                        -- Secondary requests otherwise take priority
-                    else
-                        wb_mem_wr_en   <= sec_req.wr_en;
-                        wb_mem_addr    <= sec_req.addr;
-                        wb_mem_byte_en <= sec_req.byte_en;
-                        wb_mem_wr_data <= sec_req.data;
-                    end if;
+    --                     -- Secondary requests otherwise take priority
+    --                 else
+    --                     wb_mem_wr_en   <= sec_req.wr_en;
+    --                     wb_mem_addr    <= sec_req.addr;
+    --                     wb_mem_byte_en <= sec_req.byte_en;
+    --                     wb_mem_wr_data <= sec_req.data;
+    --                 end if;
 
-                    -- Performance optimisation (FIFO can be skipped for the first transaction)
-                elsif (req_fifo.empty = '1') then
-                    if (not G_PRIORITISE_READS) then
-                        if (wr_req_valid = '1') then
-                            wb_mem_wr_en   <= '1';
-                            wb_mem_addr    <= wr_req_addr;
-                            wb_mem_byte_en <= wr_req_byte_en;
-                            wb_mem_wr_data <= wr_req_data;
-                        elsif (rd_req_valid = '1') then
-                            wb_mem_wr_en <= '0';
-                            wb_mem_addr  <= rd_req_addr;
-                        end if;
-                    else
-                        if (rd_req_valid = '1') then
-                            wb_mem_wr_en <= '0';
-                            wb_mem_addr  <= rd_req_addr;
-                        elsif (wr_req_valid = '1') then
-                            wb_mem_wr_en   <= '1';
-                            wb_mem_addr    <= wr_req_addr;
-                            wb_mem_byte_en <= wr_req_byte_en;
-                            wb_mem_wr_data <= wr_req_data;
-                        end if;
-                    end if;
-                else
-                    assert (false) report "STB state entered erroneously; no requests can be submitted for a bus transaction." severity error;
-                end if;
-            end if;
+    --                 -- Performance optimisation (FIFO can be skipped for the first transaction)
+    --             elsif (req_fifo.empty = '1') then
+    --                 if (not G_PRIORITISE_READS) then
+    --                     if (wr_req_valid = '1') then
+    --                         wb_mem_wr_en   <= '1';
+    --                         wb_mem_addr    <= wr_req_addr;
+    --                         wb_mem_byte_en <= wr_req_byte_en;
+    --                         wb_mem_wr_data <= wr_req_data;
+    --                     elsif (rd_req_valid = '1') then
+    --                         wb_mem_wr_en <= '0';
+    --                         wb_mem_addr  <= rd_req_addr;
+    --                     end if;
+    --                 else
+    --                     if (rd_req_valid = '1') then
+    --                         wb_mem_wr_en <= '0';
+    --                         wb_mem_addr  <= rd_req_addr;
+    --                     elsif (wr_req_valid = '1') then
+    --                         wb_mem_wr_en   <= '1';
+    --                         wb_mem_addr    <= wr_req_addr;
+    --                         wb_mem_byte_en <= wr_req_byte_en;
+    --                         wb_mem_wr_data <= wr_req_data;
+    --                     end if;
+    --                 end if;
+    --             else
+    --                 assert (false) report "STB state entered erroneously; no requests can be submitted for a bus transaction." severity error;
+    --             end if;
+    --         end if;
 
-            -- Register the request FIFO empty flag, to facilitate the performance optimisation
-            req_empty_reg <= req_fifo.empty;
+    --         -- Register the request FIFO empty flag, to facilitate the performance optimisation
+    --         req_empty_reg <= req_fifo.empty;
 
-            -- De-assert STB
-            if (next_state = IDLE or next_state = FSM_ERROR) then
-                wb_mem_cyc <= '0';
-                wb_mem_stb <= '0';
-            end if;
+    --         -- De-assert STB
+    --         if (next_state = IDLE or next_state = FSM_ERROR) then
+    --             wb_mem_cyc <= '0';
+    --             wb_mem_stb <= '0';
+    --         end if;
 
-            -- Generate a response
-            if (state = ACK) then
-                if (wb_mem_ack = '1') then
-                    resp_valid_out   <= '1';
-                    resp_rd_out      <= not wb_mem_wr_en;
-                    resp_rd_data_out <= wb_mem_rd_data;
-                    resp_err_out     <= '0';
-                elsif (wb_mem_err = '1') then
-                    resp_valid_out   <= '1';
-                    resp_rd_out      <= not wb_mem_wr_en;
-                    resp_rd_data_out <= wb_mem_rd_data;
-                    resp_err_out     <= '1';
-                end if;
-            end if;
+    --         -- Generate a response
+    --         if (state = ACK) then
+    --             if (wb_mem_ack = '1') then
+    --                 resp_valid_out   <= '1';
+    --                 resp_rd_out      <= not wb_mem_wr_en;
+    --                 resp_rd_data_out <= wb_mem_rd_data;
+    --                 resp_err_out     <= '0';
+    --             elsif (wb_mem_err = '1') then
+    --                 resp_valid_out   <= '1';
+    --                 resp_rd_out      <= not wb_mem_wr_en;
+    --                 resp_rd_data_out <= wb_mem_rd_data;
+    --                 resp_err_out     <= '1';
+    --             end if;
+    --         end if;
 
-        end if;
-    end process;
+    --     end if;
+    -- end process;
 
 end architecture;

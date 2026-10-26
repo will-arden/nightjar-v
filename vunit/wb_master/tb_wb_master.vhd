@@ -73,8 +73,9 @@ begin
 
     x_wb_master : entity work.wb_master
         generic map(
-            G_ADDR_WIDTH => G_ADDR_WIDTH,
-            G_DATA_WIDTH => G_DATA_WIDTH
+            G_ADDR_WIDTH     => G_ADDR_WIDTH,
+            G_DATA_WIDTH     => G_DATA_WIDTH,
+            G_REQ_FIFO_DEPTH => 0
         )
         port map
         (
