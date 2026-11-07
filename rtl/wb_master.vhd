@@ -302,7 +302,7 @@ begin
         case (state) is
 
             when IDLE =>
-                if (pri_req_valid = '1' or sec_req_valid = '1') then
+                if (req_pair_valid = '1' and (pri_req_valid = '1' or sec_req_valid = '1')) then
                     next_state <= STB;
                 end if;
 
