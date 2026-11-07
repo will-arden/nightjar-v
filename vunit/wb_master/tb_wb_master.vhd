@@ -237,6 +237,11 @@ begin
                 report "[DEBUG-" & to_hstring(C_DEBUG_COMPONENT_WB_MASTER) & "-" & to_hstring(C_DEBUG_INSTANCE_ID) & "] Wishbone bus error"
                     severity warning;
 
+                -- Wishbone bus retry
+                assert (dbg_msg /= x"02")
+                report "[DEBUG-" & to_hstring(C_DEBUG_COMPONENT_WB_MASTER) & "-" & to_hstring(C_DEBUG_INSTANCE_ID) & "] Wishbone bus retry"
+                    severity note;
+
             end if;
 
             if (rst = '1') then

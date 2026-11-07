@@ -432,10 +432,16 @@ begin
             dbg_component <= C_DEBUG_COMPONENT_WB_MASTER;
             dbg_instance  <= G_DEBUG_INSTANCE_ID;
 
-            -- Error: Wishbone slave responds with ERR_I
+            -- Wishbone slave responds with ERR_I
             if (wb_mem_stb = '1' and wb_mem_cyc = '1' and wb_mem_err = '1') then
                 dbg_valid <= '1';
                 dbg_msg   <= x"01";
+            end if;
+
+            -- Wishbone slave responds with RTY_I
+            if (wb_mem_stb = '1' and wb_mem_cyc = '1' and wb_mem_rty = '1') then
+                dbg_valid <= '1';
+                dbg_msg   <= x"02";
             end if;
 
             -- Invalidate debug messages on reset
