@@ -158,7 +158,9 @@ begin
     -- (Optional) Request buffering --
     ----------------------------------
 
-    -- Request buffering can help to reduce stalling by increasing parallelism.
+    -- Request buffering can help to reduce stalling by increasing parallelism. For an in-order CPU, such a FIFO can only be useful for STORE requests, since
+    -- the CPU pipeline will simply stall when it is waiting to receive the result of a LOAD, meaning a FIFO cannot relieve the bottleneck.
+    
     -- Whenever either a read/write request is input, it is passed through the FIFO; requests are handled in pairs so that they are processed chronologically.
     -- The FIFO wr_ready signal is connected to both input streams, such that they are accepted together and remain in sync.
 
