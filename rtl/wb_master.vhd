@@ -79,10 +79,7 @@ end entity;
 
 architecture rtl of wb_master is
 
-    -- FSM states
-    type state_t is (IDLE, STB, ACK, RTY, FSM_ERROR);
-    signal state      : state_t;
-    signal next_state : state_t;
+    constant C_INIT_RTY_TIMER_VAL : unsigned := to_unsigned(G_RETRY_TIMEOUT_CYC, log2ceil(G_RETRY_TIMEOUT_CYC));
 
     -- FIFO data consists of (from MSB down to LSB):
     --      Read:
@@ -138,19 +135,17 @@ architecture rtl of wb_master is
     signal sec_req_byte_en : std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0);
     signal sec_req_data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
+    -- FSM states
+    type state_t is (IDLE, STB, ACK, RTY, FSM_ERROR);
+    signal state      : state_t;
+    signal next_state : state_t;
+
     -- Misc. control signals
     signal req_pair_valid : std_logic;
     signal req_pair_ready : std_logic;
-
-    signal addr_in_prog       : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
-    signal wr_data_in_prog    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
-    signal wr_en_in_prog      : std_logic;
-    signal wr_byte_en_in_prog : std_logic_vector(((G_DATA_WIDTH + 7) / 8) downto 0);
-
-    signal pri_req_done : std_logic;
-    signal sec_req_done : std_logic;
-
-    signal rty_timer : unsigned(log2ceil(G_RETRY_TIMEOUT_CYC) - 1 downto 0);
+    signal pri_req_done   : std_logic;
+    signal sec_req_done   : std_logic;
+    signal rty_timer      : unsigned(log2ceil(G_RETRY_TIMEOUT_CYC) - 1 downto 0);
 
 begin
 
@@ -160,7 +155,7 @@ begin
 
     -- Request buffering can help to reduce stalling by increasing parallelism. For an in-order CPU, such a FIFO can only be useful for STORE requests, since
     -- the CPU pipeline will simply stall when it is waiting to receive the result of a LOAD, meaning a FIFO cannot relieve the bottleneck.
-    
+
     -- Whenever either a read/write request is input, it is passed through the FIFO; requests are handled in pairs so that they are processed chronologically.
     -- The FIFO wr_ready signal is connected to both input streams, such that they are accepted together and remain in sync.
 
@@ -247,8 +242,8 @@ begin
         pri_req_data    <= wr_req_data_in;
 
         -- Secondary = Read
-        sec_req_valid <= rd_req_valid;
-        sec_req_addr  <= rd_req_addr;
+        sec_req_valid <= rd_req_valid_in;
+        sec_req_addr  <= rd_req_addr_in;
         sec_req_wr_en <= '0';
 
     end generate;
@@ -325,6 +320,10 @@ begin
                     else
                         next_state <= IDLE;
                     end if;
+
+                    -- Otherwise, enter the RTY state when RTY_I is received
+                elsif (wb_mem_rty = '1') then
+                    next_state <= RTY;
                 end if;
 
             when RTY =>
@@ -387,6 +386,16 @@ begin
                 wb_mem_cyc <= '0';
             end if;
 
+            -- Decrement the retry timer in the RTY state
+            if ((state = RTY) and (rty_timer > 0)) then
+                rty_timer <= rty_timer - 1;
+            end if;
+
+            -- Re-initialise the retry timer
+            if (next_state /= RTY) then
+                rty_timer <= C_INIT_RTY_TIMER_VAL;
+            end if;
+
             -- Initialise state on reset
             if (rst = '1') then
                 state        <= IDLE;
@@ -394,6 +403,7 @@ begin
                 wb_mem_cyc   <= '0';
                 pri_req_done <= '0';
                 sec_req_done <= '0';
+                rty_timer    <= C_INIT_RTY_TIMER_VAL;
             end if;
         end if;
     end process;
