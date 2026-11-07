@@ -158,6 +158,11 @@ architecture rtl of wb_master is
     signal resp_rd_data_int : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal resp_err_int     : std_logic;
 
+    signal resp_valid_reg   : std_logic;
+    signal resp_rd_reg      : std_logic;
+    signal resp_rd_data_reg : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal resp_err_reg     : std_logic;
+
     -- Misc. control signals
     signal req_pair_valid : std_logic;
     signal req_pair_ready : std_logic;
@@ -323,8 +328,8 @@ begin
             when IDLE =>
                 if (req_pair_valid = '1' and (pri_req_valid = '1' or sec_req_valid = '1')) then
 
-                    -- Before entering STB, check that the downstream is ready to receive a response
-                    if (resp_ready_int = '1') then
+                    -- Before entering STB, check that the response register will be empty
+                    if ((resp_valid_reg = '0' and resp_valid_int = '0') or (resp_ready_int = '1')) then
                         next_state <= STB;
                     else
                         next_state <= RESP_STALL;
@@ -342,8 +347,8 @@ begin
                     -- If there is an outstanding request, immediately action it
                     if (pri_req_valid = '1' and pri_req_done = '0') or (sec_req_valid = '1' and sec_req_done = '0') then
 
-                        -- Before entering STB, check that the downstream is ready to receive a response
-                        if (resp_ready_int = '1') then
+                        -- Before entering STB, check that the response register will be empty
+                        if ((resp_valid_reg = '0' and resp_valid_int = '0') or (resp_ready_int = '1')) then
                             next_state <= STB;
                         else
                             next_state <= RESP_STALL;
@@ -361,18 +366,34 @@ begin
             when RTY =>
                 if (rty_timer = 0) then
 
-                    -- Before entering STB, check that the downstream is ready to receive a response
-                    if (resp_ready_int = '1') then
+                    -- Before entering STB, check that the response register will be empty
+                    if ((resp_valid_reg = '0' and resp_valid_int = '0') or (resp_ready_int = '1')) then
                         next_state <= STB;
                     else
-                        next_state <= RESP_STALL; -- TODO: Do not replace what's on the bus, if going from STB -> RTY -> RESP_STALL -> STB
+                        next_state <= RESP_STALL;
                     end if;
 
                 end if;
 
             when RESP_STALL =>
-                if (resp_ready_int = '1') then
-                    next_state <= STB;
+
+                -- Only exit this state once the register has been read from
+                if (resp_ready_int = '1' or resp_valid_reg = '0') then
+
+                    -- If there is an outstanding request, immediately action it
+                    if (pri_req_valid = '1' and pri_req_done = '0') or (sec_req_valid = '1' and sec_req_done = '0') then
+
+                        -- Before entering STB, check that the response register will be empty
+                        if ((resp_valid_reg = '0' and resp_valid_int = '0') or (resp_ready_int = '1')) then
+                            next_state <= STB;
+                        else
+                            next_state <= RESP_STALL;
+                        end if;
+
+                    else
+                        next_state <= IDLE;
+                    end if;
+
                 end if;
 
                 -- Unreachable state
@@ -424,8 +445,8 @@ begin
                 sec_req_done <= '0';
             end if;
 
-            -- De-assert STB_O and CYC_O upon transition to IDLE or RTY
-            if (next_state = IDLE or next_state = RTY) then
+            -- De-assert STB_O and CYC_O
+            if (next_state = IDLE or next_state = RTY or next_state = RESP_STALL) then
                 wb_mem_stb <= '0';
                 wb_mem_cyc <= '0';
             end if;
@@ -464,13 +485,36 @@ begin
     resp_valid_int   <= wb_mem_ack or wb_mem_err;
     resp_rd_int      <= wb_mem_wr_en;
     resp_rd_data_int <= wb_mem_rd_data;
-    resp_err         <= wb_mem_err;
+    resp_err_int     <= wb_mem_err;
 
     -----------------------------------
     -- (Optional) Response buffering --
     -----------------------------------
 
-    resp_ready_int <= '1'; -- This comes from either the FIFO or the port
+    -- Process to register the response to decouple response-readiness from request-readiness
+    resp_reg_proc : process (clk) is
+    begin
+        if (rising_edge(clk)) then
+
+            -- Empty the register contents when necessary
+            if (resp_valid_reg = '1' and resp_ready_int = '1' and resp_valid_int = '0') then
+                resp_valid_reg <= '0';
+            end if;
+
+            -- Before the response is lost, register it
+            if (resp_valid_int = '1' and resp_ready_int = '0') or (resp_valid_reg = '1' and resp_ready_int = '1' and resp_valid_int = '1') then
+                resp_valid_reg   <= resp_valid_int;
+                resp_rd_reg      <= resp_rd_int;
+                resp_rd_data_reg <= resp_rd_data_int;
+                resp_err_reg     <= resp_err_int;
+            end if;
+
+            -- Initialise on reset
+            if (rst = '1') then
+                resp_valid_reg <= '0';
+            end if;
+        end if;
+    end process;
 
     gen_resp_fifo : if ((G_RESP_FIFO_DEPTH > 0) and (C_FIFO_WIDTH > 0)) generate
         assert (false) report "Not implemented" severity failure;
