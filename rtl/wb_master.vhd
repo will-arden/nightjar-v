@@ -483,7 +483,7 @@ begin
 
     -- Drive the output response
     resp_valid_int   <= wb_mem_ack or wb_mem_err;
-    resp_rd_int      <= wb_mem_wr_en;
+    resp_rd_int      <= not wb_mem_wr_en;
     resp_rd_data_int <= wb_mem_rd_data;
     resp_err_int     <= wb_mem_err;
 
@@ -521,11 +521,23 @@ begin
     end generate;
 
     gen_no_resp_fifo : if (not ((G_RESP_FIFO_DEPTH > 0) and (C_FIFO_WIDTH > 0))) generate
-        resp_ready_int <= resp_ready;
-        resp_valid     <= resp_valid_int;
-        resp_rd        <= resp_rd_int;
-        resp_rd_data   <= resp_rd_data_int;
-        resp_err       <= resp_err_int;
+
+        resp_assignments_proc : process (all) is
+        begin
+            resp_ready_int <= resp_ready;
+            if (resp_valid_reg = '0') then
+                resp_valid   <= resp_valid_int;
+                resp_rd      <= resp_rd_int;
+                resp_rd_data <= resp_rd_data_int;
+                resp_err     <= resp_err_int;
+            else
+                resp_valid   <= resp_valid_reg;
+                resp_rd      <= resp_rd_reg;
+                resp_rd_data <= resp_rd_data_reg;
+                resp_err     <= resp_err_reg;
+            end if;
+        end process;
+
     end generate;
 
     -----------------
