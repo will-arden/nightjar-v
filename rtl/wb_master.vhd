@@ -20,16 +20,18 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+use work.nj_global_pkg.all;
 use work.common_pkg.all;
 
 entity wb_master is
     generic (
-        G_ADDR_WIDTH        : positive := 32;
-        G_DATA_WIDTH        : positive := 32;
-        G_REQ_FIFO_DEPTH    : natural  := 8;
-        G_RESP_FIFO_DEPTH   : natural  := 8;
-        G_PRIORITISE_READS  : boolean  := false;
-        G_RETRY_TIMEOUT_CYC : positive := 10
+        G_ADDR_WIDTH        : positive                     := 32;
+        G_DATA_WIDTH        : positive                     := 32;
+        G_REQ_FIFO_DEPTH    : natural                      := 8;
+        G_RESP_FIFO_DEPTH   : natural                      := 8;
+        G_PRIORITISE_READS  : boolean                      := false;
+        G_RETRY_DELAY_CYC   : positive                     := 10;
+        G_DEBUG_INSTANCE_ID : std_logic_vector(7 downto 0) := x"00"
     );
     port (
 
@@ -72,14 +74,23 @@ entity wb_master is
         wb_mem_byte_en : out std_logic_vector((((G_DATA_WIDTH + 7) / 8)) - 1 downto 0); -- SEL_O
         wb_mem_addr    : out std_logic_vector(G_ADDR_WIDTH - 1 downto 0);               -- ADR_O
         wb_mem_rd_data : in std_logic_vector(G_DATA_WIDTH - 1 downto 0);                -- DAT_I
-        wb_mem_wr_data : out std_logic_vector(G_DATA_WIDTH - 1 downto 0)                -- DAT_O
+        wb_mem_wr_data : out std_logic_vector(G_DATA_WIDTH - 1 downto 0);               -- DAT_O
+
+        ---------------------
+        -- Debug interface --
+        ---------------------
+
+        dbg_valid     : out std_logic;                    -- Valid pulse
+        dbg_component : out std_logic_vector(7 downto 0); -- Component identifier byte
+        dbg_instance  : out std_logic_vector(7 downto 0); -- Instance identifier byte
+        dbg_msg       : out std_logic_vector(7 downto 0)  -- Message byte
 
     );
 end entity;
 
 architecture rtl of wb_master is
 
-    constant C_INIT_RTY_TIMER_VAL : unsigned := to_unsigned(G_RETRY_TIMEOUT_CYC, log2ceil(G_RETRY_TIMEOUT_CYC));
+    constant C_INIT_RTY_TIMER_VAL : unsigned := to_unsigned(G_RETRY_DELAY_CYC, log2ceil(G_RETRY_DELAY_CYC));
 
     -- FIFO data consists of (from MSB down to LSB):
     --      Read:
@@ -145,7 +156,7 @@ architecture rtl of wb_master is
     signal req_pair_ready : std_logic;
     signal pri_req_done   : std_logic;
     signal sec_req_done   : std_logic;
-    signal rty_timer      : unsigned(log2ceil(G_RETRY_TIMEOUT_CYC) - 1 downto 0);
+    signal rty_timer      : unsigned(log2ceil(G_RETRY_DELAY_CYC) - 1 downto 0);
 
 begin
 
@@ -404,6 +415,32 @@ begin
                 pri_req_done <= '0';
                 sec_req_done <= '0';
                 rty_timer    <= C_INIT_RTY_TIMER_VAL;
+            end if;
+        end if;
+    end process;
+
+    -----------------
+    -- Debug logic --
+    -----------------
+
+    dbg_proc : process (clk) is
+    begin
+        if (rising_edge(clk)) then
+            dbg_valid <= '0'; -- By default, keep the valid flag low
+
+            -- Always respond with the same component and instance IDs
+            dbg_component <= C_DEBUG_COMPONENT_WB_MASTER;
+            dbg_instance  <= G_DEBUG_INSTANCE_ID;
+
+            -- Error: Wishbone slave responds with ERR_I
+            if (wb_mem_stb = '1' and wb_mem_cyc = '1' and wb_mem_err = '1') then
+                dbg_valid <= '1';
+                dbg_msg   <= x"01";
+            end if;
+
+            -- Invalidate debug messages on reset
+            if (rst = '1') then
+                dbg_valid <= '0';
             end if;
         end if;
     end process;

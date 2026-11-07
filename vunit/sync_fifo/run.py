@@ -17,6 +17,7 @@ vu.add_vhdl_builtins() # Add VUnit's builtin HDL utilities for checking, logging
 lib = vu.add_library("lib") # Create a new library
 
 # Add RTL files
+lib.add_source_file("../rtl/nj_global_pkg.vhd")
 lib.add_source_file("../rtl/common_pkg.vhd")
 lib.add_source_file("../rtl/sync_fifo.vhd")
 

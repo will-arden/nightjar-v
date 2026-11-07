@@ -6,6 +6,8 @@ use ieee.numeric_std.all;
 library vunit_lib;
 context vunit_lib.vunit_context;
 
+use work.nj_global_pkg.all;
+
 entity tb_wb_master is
     generic (
         runner_cfg   : string;
@@ -17,8 +19,8 @@ entity tb_wb_master is
         G_BASE_LATENCY      : positive               := 3;
         G_PENALTY_LATENCY   : positive               := 50;
         G_PENALTY_PROB_X100 : natural range 0 to 100 := 20;
-        G_ERR_PROB_X100     : natural range 0 to 100 := 10;
-        G_RTY_PROB_X100     : natural range 0 to 100 := 0;
+        G_ERR_PROB_X100     : natural range 0 to 100 := 5;
+        G_RTY_PROB_X100     : natural range 0 to 100 := 5;
         G_RANDOM_SEED_A     : natural                := 1234;
         G_RANDOM_SEED_B     : natural                := 5678
     );
@@ -26,8 +28,8 @@ end;
 
 architecture tb of tb_wb_master is
 
-    -- Clock period
-    constant C_CLK_PERIOD : time := 10 ns;
+    constant C_CLK_PERIOD        : time                         := 10 ns;
+    constant C_DEBUG_INSTANCE_ID : std_logic_vector(7 downto 0) := x"00";
 
     -- DUT ports
     signal clk            : std_logic := '0';
@@ -56,10 +58,17 @@ architecture tb of tb_wb_master is
     signal wb_mem_addr    : std_logic_vector(G_ADDR_WIDTH - 1 downto 0);
     signal wb_mem_rd_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal wb_mem_wr_data : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal dbg_valid      : std_logic;
+    signal dbg_component  : std_logic_vector(7 downto 0);
+    signal dbg_instance   : std_logic_vector(7 downto 0);
+    signal dbg_msg        : std_logic_vector(7 downto 0);
 
     -- Reference memory
     type mem_t is array (0 to G_MEM_DEPTH - 1) of std_logic_vector(G_DATA_WIDTH - 1 downto 0);
     signal ref_mem : mem_t := (others => (others => '0'));
+
+    -- Misc. testbench signals
+    signal number_wb_errors : natural := 0;
 
 begin
 
@@ -73,9 +82,10 @@ begin
 
     x_wb_master : entity work.wb_master
         generic map(
-            G_ADDR_WIDTH     => G_ADDR_WIDTH,
-            G_DATA_WIDTH     => G_DATA_WIDTH,
-            G_REQ_FIFO_DEPTH => 0
+            G_ADDR_WIDTH        => G_ADDR_WIDTH,
+            G_DATA_WIDTH        => G_DATA_WIDTH,
+            G_REQ_FIFO_DEPTH    => 0,
+            G_DEBUG_INSTANCE_ID => C_DEBUG_INSTANCE_ID
         )
         port map
         (
@@ -103,7 +113,11 @@ begin
             wb_mem_byte_en => wb_mem_byte_en,
             wb_mem_addr    => wb_mem_addr,
             wb_mem_rd_data => wb_mem_rd_data,
-            wb_mem_wr_data => wb_mem_wr_data
+            wb_mem_wr_data => wb_mem_wr_data,
+            dbg_valid      => dbg_valid,
+            dbg_component  => dbg_component,
+            dbg_instance   => dbg_instance,
+            dbg_msg        => dbg_msg
         );
 
     ----------------------------------
@@ -169,8 +183,8 @@ begin
     begin
         test_runner_setup(runner, runner_cfg);
         while test_suite loop
-            if run("test_0") then
-                info("Beginning wb_master test...");
+            if run("write_and_read") then
+                info("Beginning write_and_read");
 
                 -- Default signal assigments
                 rd_req_valid   <= '0';
@@ -185,7 +199,7 @@ begin
                 wait until rising_edge(clk);
 
                 -- Request several writes
-                for i in 0 to 9 loop
+                for i in 0 to (G_MEM_DEPTH - 1) loop
                     wr_req(
                     addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
                     data    => std_logic_vector(to_unsigned((i * 4) + 1, G_DATA_WIDTH)),
@@ -198,6 +212,37 @@ begin
                 test_runner_cleanup(runner);
             end if;
         end loop;
+    end process;
+
+    -----------------------------
+    -- Monitor debug interface --
+    -----------------------------
+
+    tb_dbg_proc : process (clk) is
+    begin
+        if (rising_edge(clk)) then
+
+            if (dbg_valid = '1') then
+
+                -- Alive
+                assert (dbg_msg /= x"00")
+                report "[DEBUG-" & to_hstring(C_DEBUG_COMPONENT_WB_MASTER) & "-" & to_hstring(C_DEBUG_INSTANCE_ID) & "] Alive"
+                    severity note;
+
+                -- Wishbone bus error
+                if (dbg_msg = x"01") then
+                    number_wb_errors <= number_wb_errors + 1; -- Increment count
+                end if;
+                assert (dbg_msg /= x"01")
+                report "[DEBUG-" & to_hstring(C_DEBUG_COMPONENT_WB_MASTER) & "-" & to_hstring(C_DEBUG_INSTANCE_ID) & "] Wishbone bus error"
+                    severity warning;
+
+            end if;
+
+            if (rst = '1') then
+                number_wb_errors <= 0;
+            end if;
+        end if;
     end process;
 
 end architecture;
