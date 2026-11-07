@@ -147,9 +147,16 @@ architecture rtl of wb_master is
     signal sec_req_data    : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
 
     -- FSM states
-    type state_t is (IDLE, STB, ACK, RTY, FSM_ERROR);
+    type state_t is (IDLE, STB, ACK, RTY, RESP_STALL, FSM_ERROR);
     signal state      : state_t;
     signal next_state : state_t;
+
+    -- Internal response signals
+    signal resp_valid_int   : std_logic;
+    signal resp_ready_int   : std_logic;
+    signal resp_rd_int      : std_logic;
+    signal resp_rd_data_int : std_logic_vector(G_DATA_WIDTH - 1 downto 0);
+    signal resp_err_int     : std_logic;
 
     -- Misc. control signals
     signal req_pair_valid : std_logic;
@@ -157,6 +164,7 @@ architecture rtl of wb_master is
     signal pri_req_done   : std_logic;
     signal sec_req_done   : std_logic;
     signal rty_timer      : unsigned(log2ceil(G_RETRY_DELAY_CYC) - 1 downto 0);
+    signal rty_in_prog    : std_logic;
 
 begin
 
@@ -314,7 +322,13 @@ begin
 
             when IDLE =>
                 if (req_pair_valid = '1' and (pri_req_valid = '1' or sec_req_valid = '1')) then
-                    next_state <= STB;
+
+                    -- Before entering STB, check that the downstream is ready to receive a response
+                    if (resp_ready_int = '1') then
+                        next_state <= STB;
+                    else
+                        next_state <= RESP_STALL;
+                    end if;
                 end if;
 
             when STB =>
@@ -327,7 +341,14 @@ begin
 
                     -- If there is an outstanding request, immediately action it
                     if (pri_req_valid = '1' and pri_req_done = '0') or (sec_req_valid = '1' and sec_req_done = '0') then
-                        next_state <= STB;
+
+                        -- Before entering STB, check that the downstream is ready to receive a response
+                        if (resp_ready_int = '1') then
+                            next_state <= STB;
+                        else
+                            next_state <= RESP_STALL;
+                        end if;
+
                     else
                         next_state <= IDLE;
                     end if;
@@ -339,6 +360,18 @@ begin
 
             when RTY =>
                 if (rty_timer = 0) then
+
+                    -- Before entering STB, check that the downstream is ready to receive a response
+                    if (resp_ready_int = '1') then
+                        next_state <= STB;
+                    else
+                        next_state <= RESP_STALL; -- TODO: Do not replace what's on the bus, if going from STB -> RTY -> RESP_STALL -> STB
+                    end if;
+
+                end if;
+
+            when RESP_STALL =>
+                if (resp_ready_int = '1') then
                     next_state <= STB;
                 end if;
 
@@ -363,7 +396,7 @@ begin
                 wb_mem_cyc <= '1';
 
                 -- Do not change the data signals if coming from the RTY state
-                if (state /= RTY) then
+                if (state /= RTY and rty_in_prog = '0') then
 
                     -- Place the primary request on the bus
                     if (pri_req_valid = '1' and pri_req_done = '0') then
@@ -397,6 +430,13 @@ begin
                 wb_mem_cyc <= '0';
             end if;
 
+            -- Remember when a retry is in progress, such that the request on the bus is not replaced
+            if (next_state = RTY) then
+                rty_in_prog <= '1';
+            elsif (next_state = STB) then
+                rty_in_prog <= '0';
+            end if;
+
             -- Decrement the retry timer in the RTY state
             if ((state = RTY) and (rty_timer > 0)) then
                 rty_timer <= rty_timer - 1;
@@ -415,9 +455,34 @@ begin
                 pri_req_done <= '0';
                 sec_req_done <= '0';
                 rty_timer    <= C_INIT_RTY_TIMER_VAL;
+                rty_in_prog  <= '0';
             end if;
         end if;
     end process;
+
+    -- Drive the output response
+    resp_valid_int   <= wb_mem_ack or wb_mem_err;
+    resp_rd_int      <= wb_mem_wr_en;
+    resp_rd_data_int <= wb_mem_rd_data;
+    resp_err         <= wb_mem_err;
+
+    -----------------------------------
+    -- (Optional) Response buffering --
+    -----------------------------------
+
+    resp_ready_int <= '1'; -- This comes from either the FIFO or the port
+
+    gen_resp_fifo : if ((G_RESP_FIFO_DEPTH > 0) and (C_FIFO_WIDTH > 0)) generate
+        assert (false) report "Not implemented" severity failure;
+    end generate;
+
+    gen_no_resp_fifo : if (not ((G_RESP_FIFO_DEPTH > 0) and (C_FIFO_WIDTH > 0))) generate
+        resp_ready_int <= resp_ready;
+        resp_valid     <= resp_valid_int;
+        resp_rd        <= resp_rd_int;
+        resp_rd_data   <= resp_rd_data_int;
+        resp_err       <= resp_err_int;
+    end generate;
 
     -----------------
     -- Debug logic --

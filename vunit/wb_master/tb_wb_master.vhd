@@ -85,6 +85,7 @@ begin
             G_ADDR_WIDTH        => G_ADDR_WIDTH,
             G_DATA_WIDTH        => G_DATA_WIDTH,
             G_REQ_FIFO_DEPTH    => 0,
+            G_RESP_FIFO_DEPTH   => 0,
             G_DEBUG_INSTANCE_ID => C_DEBUG_INSTANCE_ID
         )
         port map
@@ -193,7 +194,7 @@ begin
                 wr_req_addr    <= (others => '0');
                 wr_req_byte_en <= (others => '1');
                 wr_req_data    <= (others => '0');
-                resp_ready     <= '0';
+                resp_ready     <= '1';
                 wait until rst = '0';
                 wait for (5 * C_CLK_PERIOD);
                 wait until rising_edge(clk);
