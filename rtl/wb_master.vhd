@@ -345,7 +345,7 @@ begin
                 if (wb_mem_ack = '1' or wb_mem_err = '1') then
 
                     -- If there is an outstanding request, immediately action it
-                    if (pri_req_valid = '1' and pri_req_done = '0') or (sec_req_valid = '1' and sec_req_done = '0') then
+                    if (req_pair_valid = '1' and pri_req_valid = '1' and pri_req_done = '0') or (req_pair_valid = '1' and sec_req_valid = '1' and sec_req_done = '0') then
 
                         -- Before entering STB, check that the response register will be empty
                         if ((resp_valid_reg = '0' and resp_valid_int = '0') or (resp_ready_int = '1')) then
@@ -381,7 +381,7 @@ begin
                 if (resp_ready_int = '1' or resp_valid_reg = '0') then
 
                     -- If there is an outstanding request, immediately action it
-                    if (pri_req_valid = '1' and pri_req_done = '0') or (sec_req_valid = '1' and sec_req_done = '0') then
+                    if (req_pair_valid = '1' and pri_req_valid = '1' and pri_req_done = '0') or (req_pair_valid = '1' and sec_req_valid = '1' and sec_req_done = '0') then
 
                         -- Before entering STB, check that the response register will be empty
                         if ((resp_valid_reg = '0' and resp_valid_int = '0') or (resp_ready_int = '1')) then
