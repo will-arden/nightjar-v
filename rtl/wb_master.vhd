@@ -168,7 +168,7 @@ architecture rtl of wb_master is
     signal req_pair_ready : std_logic;
     signal pri_req_done   : std_logic;
     signal sec_req_done   : std_logic;
-    signal rty_timer      : unsigned(log2ceil(G_RETRY_DELAY_CYC) - 1 downto 0);
+    signal rty_timer      : unsigned(log2ceil(G_RETRY_DELAY_CYC + 1) - 1 downto 0);
     signal rty_in_prog    : std_logic;
 
 begin
@@ -266,18 +266,20 @@ begin
         pri_req_data    <= wr_req_data_in;
 
         -- Secondary = Read
-        sec_req_valid <= rd_req_valid_in;
-        sec_req_addr  <= rd_req_addr_in;
-        sec_req_wr_en <= '0';
+        sec_req_valid   <= rd_req_valid_in;
+        sec_req_addr    <= rd_req_addr_in;
+        sec_req_wr_en   <= '0';
+        sec_req_byte_en <= (others => '1');
 
     end generate;
 
     gen_prioritise_reads : if (G_PRIORITISE_READS) generate
 
         -- Primary = Read
-        pri_req_valid <= rd_req_valid_in;
-        pri_req_addr  <= rd_req_addr_in;
-        pri_req_wr_en <= '0';
+        pri_req_valid   <= rd_req_valid_in;
+        pri_req_addr    <= rd_req_addr_in;
+        pri_req_wr_en   <= '0';
+        pri_req_byte_en <= (others => '1');
 
         -- Secondary = Write
         sec_req_valid   <= wr_req_valid_in;
