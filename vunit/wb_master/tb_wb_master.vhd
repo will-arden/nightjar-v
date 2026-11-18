@@ -2,6 +2,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 
 library vunit_lib;
 context vunit_lib.vunit_context;
@@ -15,14 +16,17 @@ entity tb_wb_master is
         G_DATA_WIDTH : positive := 32;
         G_MEM_DEPTH  : positive := 1024;
 
+        G_RANDOM_SEED_A : natural := 1234;
+        G_RANDOM_SEED_B : natural := 5678;
+
         -- Memory generics
         G_BASE_LATENCY      : positive               := 3;
         G_PENALTY_LATENCY   : positive               := 50;
         G_PENALTY_PROB_X100 : natural range 0 to 100 := 20;
         G_ERR_PROB_X100     : natural range 0 to 100 := 5;
         G_RTY_PROB_X100     : natural range 0 to 100 := 5;
-        G_RANDOM_SEED_A     : natural                := 1234;
-        G_RANDOM_SEED_B     : natural                := 5678
+
+        G_RESP_READY_PROB_X100 : positive := 75
     );
 end;
 
@@ -68,7 +72,18 @@ architecture tb of tb_wb_master is
     signal ref_mem : mem_t := (others => (others => '0'));
 
     -- Misc. testbench signals
-    signal number_wb_errors : natural := 0;
+    signal number_wb_errors     : natural := 0;
+    signal num_responses        : natural := 0;
+    signal num_rd_responses     : natural := 0;
+    signal num_wr_responses     : natural := 0;
+    signal num_err_responses    : natural := 0;
+    signal num_rd_err_responses : natural := 0;
+    signal num_wr_err_responses : natural := 0;
+
+    type rd_addr_array_t is array (0 to (G_MEM_DEPTH)) of std_logic_vector(31 downto 0);
+    signal rd_addr_array        : rd_addr_array_t;
+    signal rd_addr_array_wr_ptr : natural := 0;
+    signal rd_addr_array_rd_ptr : natural := 0;
 
 begin
 
@@ -181,6 +196,26 @@ begin
             wr_req_valid <= '0';
         end procedure;
 
+        -- Procedure to request a read
+        procedure rd_req (addr : in std_logic_vector; timeout : in positive) is
+            variable v_timer : natural := 0;
+        begin
+            report "New read request (address = 0x" & to_hstring(addr) & ")";
+            rd_addr_array(rd_addr_array_wr_ptr) <= addr;                     -- Update read address array
+            rd_addr_array_wr_ptr                <= rd_addr_array_wr_ptr + 1; -- Update pointer
+
+            -- Issue the request
+            rd_req_valid <= '1';
+            rd_req_addr  <= addr;
+            wait until rising_edge(clk);
+            while (rd_req_ready = '0') loop
+                v_timer := v_timer + 1;
+                assert (v_timer < timeout) report "Read request failed; timeout reached." severity failure;
+                wait until rising_edge(clk);
+            end loop;
+            rd_req_valid <= '0';
+        end procedure;
+
     begin
         test_runner_setup(runner, runner_cfg);
         while test_suite loop
@@ -194,12 +229,11 @@ begin
                 wr_req_addr    <= (others => '0');
                 wr_req_byte_en <= (others => '1');
                 wr_req_data    <= (others => '0');
-                resp_ready     <= '0';
                 wait until rst = '0';
                 wait for (5 * C_CLK_PERIOD);
                 wait until rising_edge(clk);
 
-                -- Request several writes
+                -- Request a write to every memory location
                 for i in 0 to (G_MEM_DEPTH - 1) loop
                     wr_req(
                     addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
@@ -209,10 +243,98 @@ begin
                     );
                 end loop;
 
+                -- Wait for the writes to be completed
                 wait for (1000 * C_CLK_PERIOD);
+
+                -- Request the same number of reads
+                for i in 0 to (G_MEM_DEPTH - 1) loop
+                    rd_req(
+                    addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
+                    timeout => 500
+                    );
+                end loop;
+
+                -- Wait for the reads to be completed
+                wait for (1000 * C_CLK_PERIOD);
+
+                -- Analyse wb_master responses
+                report "Total Number of responses: " & integer'image(num_responses);
+                report "Number of read responses: " & integer'image(num_rd_responses);
+                report "Number of write responses: " & integer'image(num_wr_responses);
+                report "Total number of error responses: " & integer'image(num_err_responses);
+                report "Number of read error responses: " & integer'image(num_rd_err_responses);
+                report "Number of write error responses: " & integer'image(num_wr_err_responses);
+                report "Number of bus errors: " & integer'image(number_wb_errors);
+                assert (num_responses = (G_MEM_DEPTH * 2)) report "Unexpected number of responses (expected: " & integer'image(2 * G_MEM_DEPTH) & ", received: " & integer'image(num_responses) & ")" severity error;
+                assert (num_err_responses = number_wb_errors) report "Number of error responses did not match the number of errors on the bus (bus errors: " & integer'image(number_wb_errors) & ", error responses: " & integer'image(num_err_responses) & ")" severity error;
+
                 test_runner_cleanup(runner);
             end if;
         end loop;
+    end process;
+
+    -----------------------
+    -- Monitor responses --
+    -----------------------
+
+    tb_resp_proc : process (clk) is
+        variable seed_a : integer := G_RANDOM_SEED_A;
+        variable seed_b : integer := G_RANDOM_SEED_B;
+        variable r      : real;
+        variable addr   : natural := 0;
+    begin
+        if (rising_edge(clk)) then
+
+            -- Randomly assert resp_ready
+            uniform(seed_a, seed_b, r);
+            if (integer(real(100) * r) < G_RESP_READY_PROB_X100) then
+                resp_ready <= '1';
+            else
+                resp_ready <= '0';
+            end if;
+
+            -- Count rd/wr responses and errors
+            if (resp_ready = '1' and resp_valid = '1') then
+                num_responses <= num_responses + 1;
+
+                if (resp_rd = '1') then
+                    num_rd_responses <= num_rd_responses + 1;
+                else
+                    num_wr_responses <= num_wr_responses + 1;
+                end if;
+
+                if (resp_err = '1') then
+                    num_err_responses <= num_err_responses + 1;
+
+                    if (resp_rd = '1') then
+                        num_rd_err_responses <= num_rd_err_responses + 1;
+                    else
+                        num_wr_err_responses <= num_wr_err_responses + 1;
+                    end if;
+                end if;
+            end if;
+
+            -- Test that read responses match the memory contents
+            if (resp_ready = '1' and resp_valid = '1' and resp_rd = '1') then
+
+                addr := to_integer(unsigned(rd_addr_array(rd_addr_array_rd_ptr)(31 downto 2))); -- Recall the correct read address
+                rd_addr_array_rd_ptr <= rd_addr_array_rd_ptr + 1;                                               -- Increment the pointer
+
+                -- Check the read data is as expected
+                report "Comparing expected read data (" & to_hstring(ref_mem(addr)) & ") with actual read data (" & to_hstring(resp_rd_data) & "), at address: " & integer'image(addr);
+                assert (resp_rd_data = ref_mem(addr)) report "Read response data (" & to_hstring(resp_rd_data) & ") did not match expected (" & to_hstring(ref_mem(addr)) & ") at address: " & integer'image(addr) severity error;
+            end if;
+
+            -- Reset counts
+            if (rst = '1') then
+                num_responses        <= 0;
+                num_rd_responses     <= 0;
+                num_wr_responses     <= 0;
+                num_err_responses    <= 0;
+                num_rd_err_responses <= 0;
+                num_wr_err_responses <= 0;
+            end if;
+        end if;
     end process;
 
     -----------------------------
