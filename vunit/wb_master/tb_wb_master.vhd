@@ -90,7 +90,7 @@ begin
 
     -- Generate clock and reset
     clk <= not clk after (C_CLK_PERIOD / 2);
-    rst <= '1', '0' after (10 * C_CLK_PERIOD);
+    -- rst <= '1', '0' after (10 * C_CLK_PERIOD);
 
     ---------------------
     -- Instantiate DUT --
@@ -217,6 +217,35 @@ begin
             rd_req_valid <= '0';
         end procedure;
 
+        -- Procedure to request a concurrent write and read to the same address
+        procedure concurrent_wr_rd (addr : in std_logic_vector; data : in std_logic_vector; byte_en : in std_logic_vector; timeout : in positive) is
+            variable v_timer : natural := 0;
+        begin
+            report "New concurrent write/read request (address = 0x" & to_hstring(addr) & ", write data = 0x" & to_hstring(data) & ")";
+            ref_mem(to_integer(unsigned(addr(addr'high downto 2)))) <= data; -- Update the reference memory
+
+            -- Issue the write request
+            wr_req_valid   <= '1';
+            wr_req_addr    <= addr;
+            wr_req_data    <= data;
+            wr_req_byte_en <= byte_en;
+
+            -- Issue the read request
+            rd_req_valid <= '1';
+            rd_req_addr  <= addr;
+
+            wait until rising_edge(clk);
+
+            while (wr_req_ready = '0' or rd_req_ready = '0') loop
+                v_timer := v_timer + 1;
+                assert (wr_req_ready = rd_req_ready) report "Requests were not accepted concurrently." severity error;
+                assert (v_timer < timeout) report "Write request failed; timeout reached." severity failure;
+                wait until rising_edge(clk);
+            end loop;
+            wr_req_valid <= '0';
+            rd_req_valid <= '0';
+        end procedure;
+
     begin
         test_runner_setup(runner, runner_cfg);
         while test_suite loop
@@ -224,13 +253,15 @@ begin
                 info("Beginning write_and_read");
 
                 -- Default signal assigments
+                rst            <= '1';
                 rd_req_valid   <= '0';
                 rd_req_addr    <= (others => '0');
                 wr_req_valid   <= '0';
                 wr_req_addr    <= (others => '0');
                 wr_req_byte_en <= (others => '1');
                 wr_req_data    <= (others => '0');
-                wait until rst = '0';
+                wait for (10 * C_CLK_PERIOD);
+                rst <= '0';
                 wait for (5 * C_CLK_PERIOD);
                 wait until rising_edge(clk);
 
@@ -257,6 +288,47 @@ begin
 
                 -- Wait for the reads to be completed
                 wait for (1000 * C_CLK_PERIOD);
+
+                -- Analyse wb_master responses
+                report "";
+                report "Total Number of responses: " & integer'image(num_responses);
+                report "Number of read responses: " & integer'image(num_rd_responses);
+                report "Number of write responses: " & integer'image(num_wr_responses);
+                report "Total number of error responses: " & integer'image(num_err_responses);
+                report "Number of read error responses: " & integer'image(num_rd_err_responses);
+                report "Number of write error responses: " & integer'image(num_wr_err_responses);
+                report "Number of bus errors: " & integer'image(number_wb_errors);
+                report "Number of write/read data mismatches: " & integer'image(num_mismatches);
+                assert (num_responses = (G_MEM_DEPTH * 2)) report "Unexpected number of responses (expected: " & integer'image(2 * G_MEM_DEPTH) & ", received: " & integer'image(num_responses) & ")" severity error;
+                assert (num_err_responses = number_wb_errors) report "Number of error responses did not match the number of errors on the bus (bus errors: " & integer'image(number_wb_errors) & ", error responses: " & integer'image(num_err_responses) & ")" severity error;
+                assert (num_mismatches = num_wr_err_responses) report "The number of read data mismatches did not match the number of failed write transactions." severity error;
+
+                test_runner_cleanup(runner);
+
+            elsif run("concurrent_write_and_read") then
+
+                -- Default signal assigments
+                rst            <= '1';
+                rd_req_valid   <= '0';
+                rd_req_addr    <= (others => '0');
+                wr_req_valid   <= '0';
+                wr_req_addr    <= (others => '0');
+                wr_req_byte_en <= (others => '1');
+                wr_req_data    <= (others => '0');
+                wait for (10 * C_CLK_PERIOD);
+                rst <= '0';
+                wait for (5 * C_CLK_PERIOD);
+                wait until rising_edge(clk);
+
+                -- Iterate through every memory location
+                for i in 0 to (G_MEM_DEPTH - 1) loop
+                    concurrent_wr_rd(
+                    addr    => std_logic_vector(to_unsigned((i * 4), G_ADDR_WIDTH)),
+                    data    => std_logic_vector(to_unsigned((i * 4) + 1, G_DATA_WIDTH)),
+                    byte_en => (wr_req_byte_en'range => '1'),
+                    timeout => 500
+                    );
+                end loop;
 
                 -- Analyse wb_master responses
                 report "";
