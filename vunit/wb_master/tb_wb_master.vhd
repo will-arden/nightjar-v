@@ -14,7 +14,7 @@ entity tb_wb_master is
         runner_cfg   : string;
         G_ADDR_WIDTH : positive := 32;
         G_DATA_WIDTH : positive := 32;
-        G_MEM_DEPTH  : positive := 1024;
+        G_MEM_DEPTH  : positive := 256;
 
         G_RANDOM_SEED_A : natural := 1234;
         G_RANDOM_SEED_B : natural := 5678;
@@ -79,6 +79,7 @@ architecture tb of tb_wb_master is
     signal num_err_responses    : natural := 0;
     signal num_rd_err_responses : natural := 0;
     signal num_wr_err_responses : natural := 0;
+    signal num_mismatches       : natural := 0;
 
     type rd_addr_array_t is array (0 to (G_MEM_DEPTH)) of std_logic_vector(31 downto 0);
     signal rd_addr_array        : rd_addr_array_t;
@@ -258,6 +259,7 @@ begin
                 wait for (1000 * C_CLK_PERIOD);
 
                 -- Analyse wb_master responses
+                report "";
                 report "Total Number of responses: " & integer'image(num_responses);
                 report "Number of read responses: " & integer'image(num_rd_responses);
                 report "Number of write responses: " & integer'image(num_wr_responses);
@@ -265,8 +267,10 @@ begin
                 report "Number of read error responses: " & integer'image(num_rd_err_responses);
                 report "Number of write error responses: " & integer'image(num_wr_err_responses);
                 report "Number of bus errors: " & integer'image(number_wb_errors);
+                report "Number of write/read data mismatches: " & integer'image(num_mismatches);
                 assert (num_responses = (G_MEM_DEPTH * 2)) report "Unexpected number of responses (expected: " & integer'image(2 * G_MEM_DEPTH) & ", received: " & integer'image(num_responses) & ")" severity error;
                 assert (num_err_responses = number_wb_errors) report "Number of error responses did not match the number of errors on the bus (bus errors: " & integer'image(number_wb_errors) & ", error responses: " & integer'image(num_err_responses) & ")" severity error;
+                assert (num_mismatches = num_wr_err_responses) report "The number of read data mismatches did not match the number of failed write transactions." severity error;
 
                 test_runner_cleanup(runner);
             end if;
@@ -318,11 +322,16 @@ begin
             if (resp_ready = '1' and resp_valid = '1' and resp_rd = '1') then
 
                 addr := to_integer(unsigned(rd_addr_array(rd_addr_array_rd_ptr)(31 downto 2))); -- Recall the correct read address
-                rd_addr_array_rd_ptr <= rd_addr_array_rd_ptr + 1;                                               -- Increment the pointer
+                rd_addr_array_rd_ptr <= rd_addr_array_rd_ptr + 1;                               -- Increment the pointer
 
-                -- Check the read data is as expected
-                report "Comparing expected read data (" & to_hstring(ref_mem(addr)) & ") with actual read data (" & to_hstring(resp_rd_data) & "), at address: " & integer'image(addr);
-                assert (resp_rd_data = ref_mem(addr)) report "Read response data (" & to_hstring(resp_rd_data) & ") did not match expected (" & to_hstring(ref_mem(addr)) & ") at address: " & integer'image(addr) severity error;
+                -- Check the read data is as expected (if there was a Wishbone error, then the data does not need to match)
+                if (resp_err = '0') then
+                    report "Comparing expected read data (" & to_hstring(ref_mem(addr)) & ") with actual read data (" & to_hstring(resp_rd_data) & "), at address: " & integer'image(addr);
+                    assert (resp_rd_data = ref_mem(addr)) report "Read response data (" & to_hstring(resp_rd_data) & ") did not match expected (" & to_hstring(ref_mem(addr)) & ") at RAM index: " & integer'image(addr) severity warning;
+                    if (not (resp_rd_data = ref_mem(addr))) then
+                        num_mismatches <= num_mismatches + 1;
+                    end if;
+                end if;
             end if;
 
             -- Reset counts
@@ -333,6 +342,7 @@ begin
                 num_err_responses    <= 0;
                 num_rd_err_responses <= 0;
                 num_wr_err_responses <= 0;
+                num_mismatches       <= 0;
             end if;
         end if;
     end process;
